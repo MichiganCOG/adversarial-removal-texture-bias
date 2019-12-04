@@ -1,6 +1,6 @@
 import torch
 import torch.optim as optim
-
+import copy
 import numpy as np
 from contextlib import contextmanager
 
@@ -19,7 +19,7 @@ class AdversarialWrapper(optim.Optimizer):
         # Adds task and adversary parameters to self.param_groups and ensures they don't overlap
         #  - self.param_groups is a list of dicts, wherein params are stored under the key 'params'
         #  - Example: param_list = [p for g in self.param_groups for p in g['params']]
-        super(optim.Optimizer, self).__init__(params, defaults=dict())
+        super(AdversarialWrapper, self).__init__(params, defaults=dict())
         
         # Keep copies of each parameter, and the last step taken
         self._copy_params = copy.deepcopy(self.param_groups)
@@ -48,7 +48,7 @@ class AdversarialWrapper(optim.Optimizer):
     def reset(self):
         for i, param in enumerate([p for g in self.param_groups for p in g['params']]):
             self._copy_params[i].data[:] = param.data[:]
-            self._last_diff[i].data[:] = np.zeros_like(param.data[:])
+            self._last_diff[i].data[:] = 0.0 
         
     # Update the task parameters (featurizer and classifier) by calling the task optimizer's step()
     def step_task(self, update_after=True, **kwargs):
