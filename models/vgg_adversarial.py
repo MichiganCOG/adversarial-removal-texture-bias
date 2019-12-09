@@ -32,26 +32,29 @@ receptive_fields_by_arch = {
 
 class VGG_Adversarial(nn.Module):
 
-    def __init__(self, arch, feature_layers, init_weights=True):
+    def __init__(self, arch, feature_layers, init_weights=True, task_state_dict=None):
         super(VGG_Adversarial, self).__init__()
         
         # Create forward architecture from torchvision.models
         task_archs = {'vgg11_adv': vgg11, 'vgg13_adv': vgg13, 'vgg16_adv': vgg16, 'vgg19_adv': vgg19}
         if arch not in task_archs:
             raise ValueError('Invalid VGG architecture: {}'.format(arch))
-        self._task_model = task_archs[arch]()
+        task_model = task_archs[arch]()
         
         # Set feature_layers
-        assert feature_layers > 0 and feature_layers <= (len(self._task_model.features) - 5)/2, 'Invalid number of feature layers: {} (max {})'.format(feature_layers, (len(self._task_model.features) - 5)/2) # VGG has 5 pool layers and 1 ReLU per conv layer
+        assert feature_layers > 0 and feature_layers <= (len(task_model.features) - 5)/2, 'Invalid number of feature layers: {} (max {})'.format(feature_layers, (len(task_model.features) - 5)/2) # VGG has 5 pool layers and 1 ReLU per conv layer
         self.feature_layers = feature_layers
         
         # Make three branches of network
         #   Featurizer and task branch consist of references to task model layers
         #   Adversary model consists of copies of task model layers deeper than featurizer
-        self.featurizer, self.task_branch, self.adversary_branch = _make_branches(self._task_model, self.feature_layers, arch)
+        self.featurizer, self.task_branch, self.adversary_branch = _make_branches(task_model, self.feature_layers, arch)
         
         if init_weights:
             self._initialize_weights()
+            
+        if task_state_dict:
+            task_model.load_state_dict(task_state_dict)
             
             
     def _initialize_weights(self):
@@ -69,34 +72,16 @@ class VGG_Adversarial(nn.Module):
         
 
     def forward(self, x):
-        return self._task_model(x)
-    
-    
-    def adversary(self, x):
         x = self.featurizer(x)
-        x = self.adversary_branch(x)
-        return x
+        y1 = self.task_branch(x)
+        y2 = self.adversary_branch(x)
+        return (y1,y2)
     
-
-    def load_task_state_dict(self, state_dict):
-        self._task_model.load_state_dict(state_dict)
     
-
-    def parameters(self, recurse=True, branch=None): #Override
-        if branch == 'task' or branch == 'adversary':
-            return [param for name,param in self.named_parameters('',recurse,branch)]
-        else:
-            return self.parameters(recurse,'task') + self.parameters(recurse,'adversary')
-
-
-    def named_parameters(self, prefix='', recurse=True, branch=None): #Override
-        if branch != 'adversary':
-            yield from self.featurizer.named_parameters(prefix+'featurizer',recurse)
-            yield from self.task_branch.named_parameters(prefix+'task_branch',recurse)
-        if branch != 'task':
-            yield from self.adversary_branch.named_parameters(prefix+'adversary_branch',recurse)
-        
-
+    #def adversary(self, x):
+    #    x = self.featurizer(x)
+    #    x = self.adversary_branch(x)
+    #    return x
 
         
 # Given the task model, return the model's three branches: featurizer, task branch, and adversary branch
@@ -168,17 +153,19 @@ def _make_adversary_branch(task_branch, feature_layers, arch):
 
 
 def _vgg_adv(arch, pretrained, task_only, progress, **kwargs):
-    if pretrained:
+    if pretrained and task_only:
+        kwargs['init_weights'] = True
+        state_dict = load_state_dict_from_url(model_urls[arch[:-4]], progress=progress)
+        kwargs['task_state_dict'] = state_dict
+    elif pretrained and not task_only:
         kwargs['init_weights'] = False
-    if 'feature_layers' not in kwargs:
+        
+    if 'feature_layers' not in kwargs or kwargs['feature_layers'] is None:
         default_fl = {'vgg11_adv': 5, 'vgg13_adv': 7, 'vgg16_adv': 8, 'vgg19_adv': 9}
         kwargs['feature_layers'] = default_fl[arch]
     model = VGG_Adversarial(arch, **kwargs)
-    if pretrained:
-        if task_only:
-            state_dict = load_state_dict_from_url(model_urls[arch[:-4]], progress=progress)
-            model.load_task_state_dict(state_dict)
-        else:
+    
+    if pretrained and not task_only:
             state_dict = load_state_dict_from_url(model_urls[arch], progress=progress)
             model.load_state_dict(state_dict)
     return model
