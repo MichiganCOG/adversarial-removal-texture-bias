@@ -81,7 +81,7 @@ def main(args):
     for epoch in range(arg.start_epochs, args.epochs):
         
         # Train one epoch
-        train_one_epoch(train_loader, model, criterion, args)
+        train_one_epoch(train_loader, model, optimizer, criterion, args)
         
         # Evaluate performance on validation set
         acc1 = validate(val_loader, model, criterion, args)
@@ -97,7 +97,7 @@ def main(args):
             is_best)
 
 
-def train_one_epoch(train_loader, model, criterion, args):
+def train_one_epoch(train_loader, model, optimizer, criterion, args):
     
     batch_time = AverageMeter('Time', ':6.3f')
     task_losses = AverageMeter('Task Loss', ':.3e')
@@ -115,28 +115,32 @@ def train_one_epoch(train_loader, model, criterion, args):
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
         
-        # Compute outputs and losses
-        target = target.cuda()
-        (task_output,adv_output) = model(images)
-        task_loss = criterion(task_output, target)
-        adv_loss = criterion(adv_output, target)
-        combined_loss = task_loss - args.lam*adv_loss
-        
-        # Measure accuracy and record losses
-        acc1, acc5 = accuracy(task_output, target, topk=(1,5))
-        task_losses.update(task_loss.item(), images.size(0))
-        adv_losses.update(adv_loss.item(), images.size(0))
-        top1.update(acc1[0], images.size(0))
-        top5.update(acc5[0], images.size(0))
-        
-        # Compute gradients and take step
-        optimizer.zero_grad()
-        combined_loss.backward()
-        optimizer.step() # Automatically alternates between task and adversary
-        
-        # Measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+        # Take predictive step if requested
+        pstep = 1.0 if args.prediction == optimizer.step_type() else 0.0
+        with optimizer.lookahead(pstep):
+
+            # Compute outputs and losses
+            target = target.cuda()
+            (task_output,adv_output) = model(images)
+            task_loss = criterion(task_output, target)
+            adv_loss = criterion(adv_output, target)
+            combined_loss = task_loss - args.lam*adv_loss
+            
+            # Measure accuracy and record losses
+            acc1, acc5 = accuracy(task_output, target, topk=(1,5))
+            task_losses.update(task_loss.item(), images.size(0))
+            adv_losses.update(adv_loss.item(), images.size(0))
+            top1.update(acc1[0], images.size(0))
+            top5.update(acc5[0], images.size(0))
+            
+            # Compute gradients and take step
+            optimizer.zero_grad()
+            combined_loss.backward()
+            optimizer.step() # Automatically alternates between task and adversary
+            
+            # Measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
         
         if i % args.print_freq == 0:
             progress.display(i)
@@ -247,7 +251,7 @@ if __name__ == '__main__':
     parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', nargs='?',
-                        choices=['task','both','neither'], const='both', default='neither',
+                        choices=['task','both','none'], const='both', default='none',
                         help='use pre-trained model [\'task\': use pretrained task model only]')
     parser.add_argument('--eta', type=int, metavar='N', default=1,
                         help='adversary steps per task step (default: 1)')
@@ -255,6 +259,9 @@ if __name__ == '__main__':
                         help='relative weight of adversary loss wrt. task loss')
     parser.add_argument('--no-gpu', dest='use_gpu', action='store_false',
                         help='disable gpu use and data parallelism')
+    parser.add_argument('--prediction', dest='prediction', nargs='?',
+                        choices=['task','adversary','none'], const='adversary', default='none',
+                        help='enable gradient prediction on up to one branch')
 
 
     args = parser.parse_args()

@@ -70,7 +70,13 @@ class AdversarialWrapper(optim.Optimizer):
             self.step_task(update_after, **kwargs)
         else:
             self.step_adversary(update_after, **kwargs)
-        
+    
+    # Return the type ("task" or "adversary") of the next step that will be taken
+    def step_type(self):
+        if self._steps_since_task >= self._eta:
+            return "task"
+        return "adversary"
+
     # Look ahead in parameter space to compute gradients at a predicted point
     @contextmanager
     def lookahead(self, step=1.0):
