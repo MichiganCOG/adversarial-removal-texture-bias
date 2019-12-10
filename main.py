@@ -124,9 +124,9 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
     for i, (images, target) in enumerate(train_loader):
         
         if args.precision == 'double':
-            images.double()
+            images = images.double()
         elif args.precision == 'half':
-            images.half()
+            images = images.half()
 
         # Take predictive step if requested
         pstep = 1.0 if args.prediction == optimizer.step_type() else 0.0
