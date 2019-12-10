@@ -52,10 +52,18 @@ class AdversarialWrapper(optim.Optimizer):
         
     # Update the task parameters (featurizer and classifier) by calling the task optimizer's step()
     def step_task(self, update_after=True, **kwargs):
+        self._task_optim.step(**kwargs)
+        self._steps_since_task = 0
+        if update_after:
+            self.update()
+
+    # Update the adversary parameters (discriminator) by calling the adversary optimizer's step()
+    def step_adversary(self, update_after=True, **kwargs):
         self._adv_optim.step(**kwargs)
         self._steps_since_task += 1
         if update_after:
             self.update()
+
     
     # The Optimizer class method. Alternates between 1 task step and [eta] adversary steps
     def step(self, update_after=True, **kwargs):

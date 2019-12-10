@@ -42,7 +42,7 @@ class VGG_Adversarial(nn.Module):
         task_model = task_archs[arch]()
         
         # Set feature_layers
-        assert feature_layers > 0 and feature_layers <= (len(task_model.features) - 5)/2, 'Invalid number of feature layers: {} (max {})'.format(feature_layers, (len(task_model.features) - 5)/2) # VGG has 5 pool layers and 1 ReLU per conv layer
+        assert feature_layers > 0 and feature_layers <= (len(task_model.features) - 5)/2, 'Invalid number of feature layers: {} (max {})'.format(feature_layers, int((len(task_model.features) - 5)/2)) # VGG has 5 pool layers and 1 ReLU per conv layer
         self.feature_layers = feature_layers
         
         # Make three branches of network
