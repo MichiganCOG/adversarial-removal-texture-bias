@@ -36,6 +36,11 @@ def main(args):
     model = models.__dict__[args.arch](feature_layers=args.feature_layers,
                                        pretrained=pretrained,
                                        task_only=task_only)
+    if args.precision == 'double':
+        model.double()
+    elif args.precision == 'half':
+        model.half()
+
     if args.use_gpu:
         model = model.cuda()
         model = torch.nn.DataParallel(model)
@@ -118,6 +123,11 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
         
+        if args.precision == 'double':
+            images.double()
+        elif args.precision == 'half':
+            images.half()
+
         # Take predictive step if requested
         pstep = 1.0 if args.prediction == optimizer.step_type() else 0.0
         with optimizer.lookahead(pstep):
@@ -266,6 +276,10 @@ parser.add_argument('--no-gpu', dest='use_gpu', action='store_false',
 parser.add_argument('--prediction', dest='prediction', nargs='?',
                     choices=['task','adversary','none'], const='adversary', default='none',
                     help='enable gradient prediction on up to one branch')
+parser.add_argument('--precision', dest='precision', default='float',
+                    choices=['half', 'float', 'double'],
+                    help='model precision')
+
 
 if __name__ == '__main__':
 
