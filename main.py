@@ -54,8 +54,8 @@ def main(args):
     optimizer = optim_wrapper(task_optim, adv_optim, args.eta)
     criterion = nn.CrossEntropyLoss()
 
-    traindir = '/z/dat/ImageNet_2012/train'
-    valdir = '/z/dat/ImageNet_2012/val'
+    traindir = os.path.join(args.data, 'train')
+    valdir = os.path.join(args.data, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -237,7 +237,7 @@ parser.add_argument('data', metavar='DIR',
 parser.add_argument('-a', '--arch', metavar='ARCH', default='vgg11_adv', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + \
                     ' (default: vgg11_adv)')
-parser.add_argument('-f', '--feature-layers', metavar='N', default=None,
+parser.add_argument('-f', '--feature-layers', metavar='N', type=int, default=None,
                     help='number of shared feature layers')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
