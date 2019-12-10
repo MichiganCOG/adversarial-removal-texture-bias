@@ -27,6 +27,9 @@ best_acc1=0
 
 def main(args):
 
+    print('Args:')
+    print(args)
+
     print('Loading model...')
     pretrained = args.pretrained == 'both' or args.pretrained == 'task'
     task_only = args.pretrained == 'task'
@@ -43,7 +46,7 @@ def main(args):
     adv_params = [p for n,p in model.named_parameters() if 'adversary_branch' in n]
     adv_optim = optim.SGD(adv_params, lr = 0.001, momentum = 0.0)
 
-    optimizer = optim_wrapper(task_optim, adv_optim)
+    optimizer = optim_wrapper(task_optim, adv_optim, args.eta)
     criterion = nn.CrossEntropyLoss()
 
     traindir = '/z/dat/ImageNet_2012/train'
@@ -72,16 +75,16 @@ def main(args):
     print('Making data loaders...')
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers,
-        pin_memory=True, sampler=None)
+        pin_memory=args.pretrained != 'none', sampler=None)
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
-        pin_memory=True, sampler=None)
+        pin_memory=args.pretrained != 'none', sampler=None)
         
     print('Training:')
-    for epoch in range(arg.start_epochs, args.epochs):
+    for epoch in range(args.start_epoch, args.epochs):
         
         # Train one epoch
-        train_one_epoch(train_loader, model, optimizer, criterion, args)
+        train_one_epoch(train_loader, model, optimizer, criterion, epoch, args)
         
         # Evaluate performance on validation set
         acc1 = validate(val_loader, model, criterion, args)
@@ -97,7 +100,7 @@ def main(args):
             is_best)
 
 
-def train_one_epoch(train_loader, model, optimizer, criterion, args):
+def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
     
     batch_time = AverageMeter('Time', ':6.3f')
     task_losses = AverageMeter('Task Loss', ':.3e')
@@ -120,7 +123,8 @@ def train_one_epoch(train_loader, model, optimizer, criterion, args):
         with optimizer.lookahead(pstep):
 
             # Compute outputs and losses
-            target = target.cuda()
+            if args.use_gpu:
+                target = target.cuda()
             (task_output,adv_output) = model(images)
             task_loss = criterion(task_output, target)
             adv_loss = criterion(adv_output, target)
@@ -213,57 +217,59 @@ def accuracy(output, target, topk=(1,)):
         return res
     
     
-    
+   
+# Command-line arg parser exposed for importing
+
+parser = argparse.ArgumentParser(description='PyTorch ImageNet Training - '
+                    'With Texture Bias Adversary')
+parser.add_argument('data', metavar='DIR',
+                    help='path to dataset')
+parser.add_argument('-a', '--arch', metavar='ARCH', default='vgg11_adv', choices=model_names,
+                    help='model architecture: ' + ' | '.join(model_names) + \
+                    ' (default: vgg11_adv)')
+parser.add_argument('-f', '--feature-layers', metavar='N', default=None,
+                    help='number of shared feature layers')
+parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+                    help='number of data loading workers (default: 4)')
+parser.add_argument('--epochs', default=90, type=int, metavar='N',
+                    help='number of total epochs to run')
+parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
+                    help='manual epoch number (useful on restarts)')
+parser.add_argument('-b', '--batch-size', default=256, type=int, metavar='N',
+                    help='mini-batch size (default: 256) before dividing '
+                    'batches among GPUs for data parallelism')
+parser.add_argument('--lr', '--learning-rate', type=float, nargs='+', metavar=('LR', 'adv_LR'),
+                    default=[0.1,0.1],
+                    help='initial learning rate [adversary learning rate]')
+parser.add_argument('--adv-lr', '--adversary-learning-rate', type=float, default=None,
+                    help=argparse.SUPPRESS)
+parser.add_argument('--momentum', type=float, nargs='+', metavar=('M', 'adv_M'),
+                    default=[0.0,0.0],
+                    help='momentum [adversary momentum]')
+parser.add_argument('--adv-momentum', '--adversary-momentum', type=float, default=None,
+                    help=argparse.SUPPRESS)
+parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float, metavar='W',
+                    help='weight decay (default: 1e-4)')
+parser.add_argument('-p', '--print-freq', default=10, type=int, metavar='N',
+                    help='print frequency (default: 10)')
+parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
+                    help='evaluate model on validation set')
+parser.add_argument('--pretrained', dest='pretrained', nargs='?',
+                    choices=['task','both','none'], const='both', default='none',
+                    help='use pre-trained model [\'task\': use pretrained task model only]')
+parser.add_argument('--eta', type=int, metavar='N', default=1,
+                    help='adversary steps per task step (default: 1)')
+parser.add_argument('--lambda', dest='lam', type=float, default=1.0, metavar='L',
+                    help='relative weight of adversary loss wrt. task loss')
+parser.add_argument('--no-gpu', dest='use_gpu', action='store_false',
+                    help='disable gpu use and data parallelism')
+parser.add_argument('--prediction', dest='prediction', nargs='?',
+                    choices=['task','adversary','none'], const='adversary', default='none',
+                    help='enable gradient prediction on up to one branch')
+
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='PyTorch ImageNet Training - '
-                        'With Texture Bias Adversary')
-    parser.add_argument('data', metavar='DIR',
-                        help='path to dataset')
-    parser.add_argument('-a', '--arch', metavar='ARCH', default='vgg11_adv', choices=model_names,
-                        help='model architecture: ' + ' | '.join(model_names) + \
-                        ' (default: vgg11_adv)')
-    parser.add_argument('-f', '--feature-layers', metavar='N', default=None,
-                        help='number of shared feature layers')
-    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
-                        help='number of total epochs to run')
-    parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
-                        help='manual epoch number (useful on restarts)')
-    parser.add_argument('-b', '--batch-size', default=256, type=int, metavar='N',
-                        help='mini-batch size (default: 256) before dividing '
-                        'batches among GPUs for data parallelism')
-    parser.add_argument('--lr', '--learning-rate', type=float, nargs='+', metavar=('LR', 'adv_LR'),
-                        default=[0.1,0.1],
-                        help='initial learning rate [adversary learning rate]')
-    parser.add_argument('--adv-lr', '--adversary-learning-rate', type=float, default=None,
-                        help=argparse.SUPPRESS)
-    parser.add_argument('--momentum', type=float, nargs='+', metavar=('M', 'adv_M'),
-                        default=[0.0,0.0],
-                        help='momentum [adversary momentum]')
-    parser.add_argument('--adv-momentum', '--adversary-momentum', type=float, default=None,
-                        help=argparse.SUPPRESS)
-    parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float, metavar='W',
-                        help='weight decay (default: 1e-4)')
-    parser.add_argument('-p', '--print-freq', default=10, type=int, metavar='N',
-                        help='print frequency (default: 10)')
-    parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
-                        help='evaluate model on validation set')
-    parser.add_argument('--pretrained', dest='pretrained', nargs='?',
-                        choices=['task','both','none'], const='both', default='none',
-                        help='use pre-trained model [\'task\': use pretrained task model only]')
-    parser.add_argument('--eta', type=int, metavar='N', default=1,
-                        help='adversary steps per task step (default: 1)')
-    parser.add_argument('--lambda', dest='lam', type=float, default=1.0, metavar='L',
-                        help='relative weight of adversary loss wrt. task loss')
-    parser.add_argument('--no-gpu', dest='use_gpu', action='store_false',
-                        help='disable gpu use and data parallelism')
-    parser.add_argument('--prediction', dest='prediction', nargs='?',
-                        choices=['task','adversary','none'], const='adversary', default='none',
-                        help='enable gradient prediction on up to one branch')
-
-
+    # Reformat args
     args = parser.parse_args()
     if args.adv_lr is None:
         args.adv_lr = args.lr[0] if len(args.lr) == 1 else args.lr[1]
@@ -271,6 +277,9 @@ if __name__ == '__main__':
     if args.adv_momentum is None:
         args.adv_momentum = args.momentum[0] if len(args.momentum) == 1 else args.momentum[1]
     args.momentum = args.momentum[0]
+    if args.prediction != "none" and args.eta != 1:
+        warnings.warn('Eta must be 1 when using prediction ({} found). Proceeding with eta=1')
+        args.eta = 1
 
     main(args)
 
