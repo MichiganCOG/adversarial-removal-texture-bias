@@ -45,11 +45,12 @@ def main(args):
         model = model.cuda()
         model = torch.nn.DataParallel(model)
 
+
     print('Making optimizers...')
     task_params = [p for n,p in model.named_parameters() if 'featurizer' in n or 'task_branch' in n]
-    task_optim = optim.SGD(task_params, lr = 0.0001, momentum = 0.0)
+    task_optim = optim.SGD(task_params, lr = args.lr, momentum = args.momentum)
     adv_params = [p for n,p in model.named_parameters() if 'adversary_branch' in n]
-    adv_optim = optim.SGD(adv_params, lr = 0.001, momentum = 0.0)
+    adv_optim = optim.SGD(adv_params, lr = args.adv_lr, momentum = args.adv_momentum)
 
     optimizer = optim_wrapper(task_optim, adv_optim, args.eta)
     criterion = nn.CrossEntropyLoss()
@@ -85,7 +86,24 @@ def main(args):
         val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers,
         pin_memory=args.pretrained != 'none', sampler=None)
         
+    if args.pretrain_epochs > 0:
+        print('Pretraining task branch:')
+        optimizer.mode('task')
+        for epoch in range(0, args.pretrain_epochs):
+            # Train one epoch
+            train_one_epoch(train_loader, model, optimizer, criterion, epoch, args)
+
+    if args.adv_pretrain_epochs > 0:
+        print('Pretraining adversary branch:')
+        optimizer.mode('adversary')
+        for epoch in range(0, args.adv_pretrain_epochs):
+            # Train one epoch
+            train_one_epoch(train_loader, model, optimizer, criterion, epoch, args)
+
+    
+    
     print('Training:')
+    optimizer.mode('train')
     for epoch in range(args.start_epoch, args.epochs):
         
         # Train one epoch
@@ -94,6 +112,7 @@ def main(args):
         # Evaluate performance on validation set
         acc1 = validate(val_loader, model, criterion, args)
         
+        # TODO: Find a better metric for determining which checkpoint is "best"
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
         save_checkpoint({
@@ -119,10 +138,11 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
     
     # Switch to training mode
     model.train()
-    
+
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
         
+        # Adjust precision
         if args.precision == 'double':
             images = images.double()
         elif args.precision == 'half':
@@ -140,6 +160,12 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
             adv_loss = criterion(adv_output, target)
             combined_loss = task_loss - args.lam*adv_loss
             
+            # Choose relevant loss from step type and optimizer mode
+            if optimizer.step_type() == 'adversary':
+                loss = adv_loss
+            elif optimizer.step_type() == 'task':
+                loss = task_loss if optimizer._mode == 'task' else combined_loss
+            
             # Measure accuracy and record losses
             acc1, acc5 = accuracy(task_output, target, topk=(1,5))
             task_losses.update(task_loss.item(), images.size(0))
@@ -147,15 +173,15 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
             top1.update(acc1[0], images.size(0))
             top5.update(acc5[0], images.size(0))
             
-            # Compute gradients and take step
-            optimizer.zero_grad()
-            combined_loss.backward()
-            optimizer.step() # Automatically alternates between task and adversary
-            
-            # Measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+        # Compute gradients and take step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step() # Automatically alternates between task and adversary
         
+        # Measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+    
         if i % args.print_freq == 0:
             progress.display(i)
     
@@ -245,6 +271,12 @@ parser.add_argument('--epochs', default=90, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
+parser.add_argument('--pretrain-epochs', type=int, nargs='+', metavar=('PTE', 'adv_PTE'),
+                    default=[10,10],
+                    help='epochs to pretrain network branches separately [adversary '
+                    'pretrain epochs]')
+parser.add_argument('--adv-pretrain-epochs', type=int, default=None,
+                    help=argparse.SUPPRESS)
 parser.add_argument('-b', '--batch-size', default=256, type=int, metavar='N',
                     help='mini-batch size (default: 256) before dividing '
                     'batches among GPUs for data parallelism')
@@ -291,6 +323,10 @@ if __name__ == '__main__':
     if args.adv_momentum is None:
         args.adv_momentum = args.momentum[0] if len(args.momentum) == 1 else args.momentum[1]
     args.momentum = args.momentum[0]
+    if args.adv_pretrain_epochs is None:
+        args.adv_pretrain_epochs = args.pretrain_epochs[0] if len(args.pretrain_epochs) == 1 \
+                else args.pretrain_epochs[1]
+    args.pretrain_epochs = args.pretrain_epochs[0]
     if args.prediction != "none" and args.eta != 1:
         warnings.warn('Eta must be 1 when using prediction ({} found). Proceeding with eta=1')
         args.eta = 1

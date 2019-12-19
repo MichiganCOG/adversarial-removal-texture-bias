@@ -35,6 +35,8 @@ class AdversarialWrapper(optim.Optimizer):
         self._eta = eta
         # Internal step count since last task step
         self._steps_since_task = self._eta-1
+        # Training mode: 'train' | 'task' | 'adversary'
+        self._mode = 'train'
             
     # Update our internal copies of the parameters. Must be called after every parameter 
     #   change if gradient prediction is being used; can be ignored otherwise
@@ -67,16 +69,26 @@ class AdversarialWrapper(optim.Optimizer):
     
     # The Optimizer class method. Alternates between 1 task step and [eta] adversary steps
     def step(self, update_after=True, **kwargs):
-        if self._steps_since_task >= self._eta:
+        if self.step_type() == 'task':
             self.step_task(update_after, **kwargs)
         else:
             self.step_adversary(update_after, **kwargs)
     
-    # Return the type ("task" or "adversary") of the next step that will be taken
+    # Return the type ('task' or 'adversary') of the next step that will be taken
     def step_type(self):
+        if self._mode != 'train':
+            return self._mode
         if self._steps_since_task >= self._eta:
-            return "task"
-        return "adversary"
+            return 'task'
+        return 'adversary'
+
+    # Change the optimization mode:
+    #    'train': Alternate between task and adversary steps
+    #    'task': Only take task steps (for pretraining)
+    #    'adversary': Only take adversary steps (for pretraining)
+    def mode(self, m):
+        assert(m in ['train', 'task', 'adversary'], 'Invalid AdversarialWrapper mode: {}'.format(m))
+        self._mode = m
 
     # Look ahead in parameter space to compute gradients at a predicted point
     @contextmanager
