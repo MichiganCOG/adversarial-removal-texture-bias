@@ -57,13 +57,16 @@ def make(background='self', construction='tilex8', overwrite=False):
         pass #TODO
     
     # Save the results
-    mnist_mosaic = {'training_images': xtrain_mosaic,
-                    'training_labels': ytrain,
-                    'testing_images': xtest_mosaic,
-                    'testing_labels': ytest}
-    with open(fname, 'wb') as f:
-        np.save(f, mnist_mosaic)
-
+    #mnist_mosaic = {'training_images': xtrain_mosaic,
+    #                'training_labels': ytrain,
+    #                'testing_images': xtest_mosaic,
+    #                'testing_labels': ytest}
+    #with open(fname, 'wb') as f:
+    #    np.save(f, mnist_mosaic)
+    with open('mnist_data/mnist_mosaic_{}_{}_train.npy', 'wb') as f:
+        np.save(f, dict(training_images=xtrain_mosaic, training_labels=ytrain))
+    with open('mnist_data/mnist_mosaic_{}_{}_train.npy', 'wb') as f:
+        np.save(f, dict(testing_images=xtest_mosaic, testing_labels=ytest))
 
 
 def maketile(xtrain, ytrain, idx, background='self', ntile=8):
