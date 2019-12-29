@@ -26,6 +26,7 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
         return
         
     # Load data
+    print('Loading MNIST...')
     xtrain, ytrain, xtest, ytest = mnist.load()
     
     # Convert to lists of images
@@ -36,8 +37,15 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
     Ntest = len(xtest)
     
     # Initialize results
+    print('Initializing results...')
     xtrain_mosaic = np.zeros([Ntrain, 224, 224], dtype=np.uint8)
     xtest_mosaic = np.zeros([Ntest, 224, 224], dtype=np.uint8)
+    
+    # Define callback functions for parallelization
+    def callback_train(results):
+        xtrain_mosaic[results[0]:results[1],:,:] = results[2]
+    def callback_test(results):
+        xtest_mosaic[results[0]:results[1],:,:] = results[2]
     
     ### Construct mosaic dataset ###
     # Tiled construction
@@ -47,9 +55,10 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
         
         # No parallelization
         if num_workers == 1 or num_workers == 0:
+            print('Making training set...')
             for i in range(Ntrain):
                 xtrain_mosaic[i,:,:] = make_tile_image(xtrain, ytrain, i, background, n)
-            
+            print('Making test set...')
             for i in range(Ntest):
                 xtest_mosaic[i,:,:] = make_tile_image(xtest, ytest, i, background, n)
                 
@@ -57,16 +66,31 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
         else:
             if num_workers == -1:
                 num_workers == mp.cpu_count()
+            print('Opening pool of {} workers...'.format(num_workers))
             pool = mp.Pool(num_workers)
             
-            # Start workers
+            # Start workers for training set
             for worker_id in range(num_workers):
                 pool.apply_async(wrap_parallel,
-                                 args=(make_tile_image, worker_id, num_workers, 
-                                            (xtrain,xtest), (ytrain,ytest),
-                                            (xtrain_mosaic,xtest_mosaic)),
-                                 kwds={'background': background,
-                                       'ntile': n})
+                                 args=(make_tile_image, worker_id, num_workers),
+                                 kwds={'dataset': xtrain,
+                                       'labels': ytrain,
+                                       'background': background,
+                                       'ntile': n},
+                                 callback=callback_train)
+            pool.close()
+            pool.join()
+            
+            # Start workers for test set
+            pool = mp.Pool(num_workers)
+            for worker_id in range(num_workers):
+                pool.apply_async(wrap_parallel,
+                                 args=(make_tile_image, worker_id, num_workers),
+                                 kwds={'dataset': xtest,
+                                       'labels': ytest,
+                                       'backgroud': background,
+                                       'ntile': n},
+                                 callback=callback_test)
             pool.close()
             pool.join()
             
@@ -76,9 +100,10 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
         
         # No paralellization
         if num_workers == 1 or num_workers == 0:
+            print('Making training set...')
             for i in range(Ntrain):
                 xtrain_mosaic[i,:,:] = make_jumbled_image(xtrain, ytrain, i, background)
-            
+            print('Making test set...')
             for i in range(Ntest):
                 xtest_mosaic[i,:,:] = make_jumbled_image(xtest, ytest, i, background)
         
@@ -86,15 +111,29 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
         else:
             if num_workers == -1:
                 num_workers = mp.cpu_count()
+            print('Opening pool of {} workers...'.format(num_workers))
             pool = mp.Pool(num_workers)
             
-            # Start workers
+            # Start workers for training set
             for worker_id in range(num_workers):
                 pool.apply_async(wrap_parallel,
-                                 args=(make_jumbled_image, worker_id, num_workers,
-                                       (xtrain,xtest), (ytrain,ytest),
-                                       (xtrain_mosaic,xtest_mosaic)),
-                                 kwds={'background': background})
+                                 args=(make_jumbled_image, worker_id, num_workers),
+                                 kwds={'dataset': xtrain,
+                                       'labels': ytrain,
+                                       'background': background},
+                                 callback=callback_train)
+            pool.close()
+            pool.join()
+            
+            # Start workers for test set
+            pool = mp.Pool(num_workers)
+            for worker_id in range(num_workers):
+                pool.apply_async(wrap_parallel,
+                                 args=(make_jumbled_image, worker_id, num_workers),
+                                 kwds={'dataset': xtest,
+                                       'labels': ytest,
+                                       'background': background},
+                                 callback=callback_test)
             pool.close()
             pool.join()
         
@@ -113,6 +152,7 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
     plt.show()
     '''
     ### Save the results ###
+    print('Saving results...')
     mnist_mosaic = {'training_images': xtrain_mosaic,
                     'training_labels': ytrain,
                     'testing_images': xtest_mosaic,
@@ -243,24 +283,25 @@ def choose_random_point(field):
     return r,c
 
     
-# Data-parallel wrapper for make_tile_image() and make_jumbled_image().
-#    Processes a chunk of both the training set and test set
-def wrap_parallel(func, worker_id, num_workers, in_datasets, in_labels, out_datasets, **kwargs):
-    # For each dataset:
-    for in_dataset, labels, out_dataset in zip(in_datasets, in_labels, out_datasets):
-        # Total images to divide up
-        N = len(in_dataset)
-        # Images per worker
-        chunk = (N + num_workers - 1) // num_workers # Divide by num_workers, round up
-        # Indices of this worker's chunk
-        start = chunk*worker_id
-        end = min(N, chunk*(worker_id+1)
-        # Process chunk
-        kwargs['dataset'] = in_dataset
-        kwargs['labels'] = labels
-        for i in range(start,end):
-            kwargs['idx'] = i
-            out_dataset[i,:,:] = func(**kwargs)
+# Data-parallel wrapper for make_tile_image() and make_jumbled_image()
+def wrap_parallel(func, worker_id, num_workers, **kwargs):
+    print('[Worker {}/{}] Started'.format(worker_id+1, num_workers))
+    # Total images to divide up
+    N = len(kwargs['dataset'])
+    # Images per worker
+    chunk = (N + num_workers - 1) // num_workers # Divide by num_workers, round up
+    # Indices of this worker's chunk
+    start = chunk*worker_id
+    end = min(N, chunk*(worker_id+1))
+    # Process chunk
+    results = np.zeros((end-start,224,224), dtype=np.uint8)
+    for i in range(start,end):
+        kwargs['idx'] = i
+        results[i-start,:,:] = func(**kwargs)
+        #if (i+1) % (chunk//10) == 0:
+        print('[Worker {}/{}] Processed {}/{} (index {} in [{},{}))'.format(worker_id+1, num_workers, i-start+1, end-start, i, start, end))
+    # Return results
+    return start, end, results
 
 
 # Load a dataset from a .npy file saved by make()
@@ -268,7 +309,7 @@ def load(background='self', construction='tilex8'):
     fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
     fname = os.path.join(DATA_DIR, fname)
     if not os.path.exists(fname):
-        print('No file \'{}\' to load. Call make(\'{}\', \'{}\') first.'.format(fname, background, construction)
+        print('No file \'{}\' to load. Call make(\'{}\', \'{}\') first.'.format(fname, background, construction))
         return None, None, None, None
     # Load file
     with open(fname, 'rb') as f:
