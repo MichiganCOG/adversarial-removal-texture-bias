@@ -6,6 +6,8 @@ import pickle
 import os
 import random
 
+DATA_DIR = 'mnist_data'
+
     
 def make(background='self', construction='tilex8', overwrite=False):
     backgrounds = ['self', 'same_label', 'correlated', 'wrong_label']
@@ -15,6 +17,7 @@ def make(background='self', construction='tilex8', overwrite=False):
     assert construction in constructions, 'Invalid choice of construction setting: {} (valid choices are [{}]'.format(construction, ','.join(constructions))
     
     fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
+    fname = os.path.join(DATA_DIR, fname)
     if os.path.exists(fname) and not overwrite:
         return
         
@@ -46,6 +49,7 @@ def make(background='self', construction='tilex8', overwrite=False):
     
     # Jumble construction    
     elif construction == 'jumble':
+
         xtrain_mosaic = np.zeros([Ntrain, 224, 224], dtype=np.uint8)
         xtest_mosaic = np.zeros([Ntest, 224, 224], dtype=np.uint8)
         
@@ -65,7 +69,9 @@ def make(background='self', construction='tilex8', overwrite=False):
         
         for i in range(Ntest):
             xtest_mosaic[i,:,:] = make_jumbled_image(xtest, ytest, i, background)
+        
     
+    '''
     ### Visualize the dataset ###
     for i in range(25):
         plt.subplot(5,10,2*i+1)
@@ -77,7 +83,7 @@ def make(background='self', construction='tilex8', overwrite=False):
         plt.gca().axes.xaxis.set_visible(False)
         plt.gca().axes.yaxis.set_visible(False)
     plt.show()
-    
+    '''
     ### Save the results ###                            # TODO: Figure this out :(
     mnist_mosaic = {'training_images': xtrain_mosaic,
                     'training_labels': ytrain,
@@ -208,10 +214,16 @@ def choose_random_point(field):
     return r,c
 
 
+# Load a dataset from a .npy file saved by make()
 def load(background='self', construction='tilex8'):
     fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
+    fname = os.path.join(DATA_DIR, fname)
+    if not os.path.exists(fname):
+        print('No file \'{}\' to load. Call make(\'{}\', \'{}\') first.'.format(fname, background, construction)
+        return None, None, None, None
+    # Load file
     with open(fname, 'rb') as f:
-        mnist_mos = np.load(f, allow_pickle=True) #TODO: This still fails
+        mnist_mos = np.load(f, allow_pickle=True).item()
     return mnist_mos['training_images'], mnist_mos['training_labels'], mnist_mos['testing_images'], mnist_mos['testing_labels']
 
 if __name__ == '__main__':
