@@ -5,17 +5,21 @@ import cv2
 import pickle
 import os
 import random
+import multiprocessing as mp
 
 DATA_DIR = 'mnist_data'
 
     
-def make(background='self', construction='tilex8', overwrite=False):
+def make(background='self', construction='tilex8', overwrite=False, num_workers=-1):
     backgrounds = ['self', 'same_label', 'correlated', 'wrong_label']
     constructions = ['tilex8', 'tilex28', 'jumble']
     
+    # Input validation
     assert background in backgrounds, 'Invalid choice of background setting: {} (valid choices are [{}]'.format(background, ','.join(backgrounds))
     assert construction in constructions, 'Invalid choice of construction setting: {} (valid choices are [{}]'.format(construction, ','.join(constructions))
+    assert num_workers >= -1, 'Invalid number of parallel workers: {}'.format(num_workers)
     
+    # Check for output file
     fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
     fname = os.path.join(DATA_DIR, fname)
     if os.path.exists(fname) and not overwrite:
@@ -31,44 +35,68 @@ def make(background='self', construction='tilex8', overwrite=False):
     Ntrain = len(xtrain)
     Ntest = len(xtest)
     
-    ### Construct mosaic dataset ###
+    # Initialize results
+    xtrain_mosaic = np.zeros([Ntrain, 224, 224], dtype=np.uint8)
+    xtest_mosaic = np.zeros([Ntest, 224, 224], dtype=np.uint8)
     
+    ### Construct mosaic dataset ###
+    # Tiled construction
     ntiles = {'tilex8': 8, 'tilex28': 28}
     if construction in ntiles:
         n = ntiles[construction]
-        xtrain_mosaic = np.zeros([Ntrain, 224, 224], dtype=np.uint8)
-        xtest_mosaic = np.zeros([Ntest, 224, 224], dtype=np.uint8)
         
-        for i in range(Ntrain):
-            xtrain_mosaic[i,:,:] = make_tile_image(xtrain, ytrain, i, background, n)
-            xtrain_mosaic[i,:,:] = np.minimum(xtrain_mosaic[i,:,:], cv2.resize(xtrain[i], dsize=(224,224)))
-        
-        for i in range(Ntest):
-            xtest_mosaic[i,:,:] = make_tile_image(xtest, ytest, i, background, n)
-            xtest_mosaic[i,:,:] = np.minimum(xtest_mosaic[i,:,:], cv2.resize(xtest[i], dsize=(224,224)))
-    
+        # No parallelization
+        if num_workers == 1 or num_workers == 0:
+            for i in range(Ntrain):
+                xtrain_mosaic[i,:,:] = make_tile_image(xtrain, ytrain, i, background, n)
+            
+            for i in range(Ntest):
+                xtest_mosaic[i,:,:] = make_tile_image(xtest, ytest, i, background, n)
+                
+        # Data parallelization
+        else:
+            if num_workers == -1:
+                num_workers == mp.cpu_count()
+            pool = mp.Pool(num_workers)
+            
+            # Start workers
+            for worker_id in range(num_workers):
+                pool.apply_async(wrap_parallel,
+                                 args=(make_tile_image, worker_id, num_workers, 
+                                            (xtrain,xtest), (ytrain,ytest),
+                                            (xtrain_mosaic,xtest_mosaic)),
+                                 kwds={'background': background,
+                                       'ntile': n})
+            pool.close()
+            pool.join()
+            
+            
     # Jumble construction    
     elif construction == 'jumble':
-
-        xtrain_mosaic = np.zeros([Ntrain, 224, 224], dtype=np.uint8)
-        xtest_mosaic = np.zeros([Ntest, 224, 224], dtype=np.uint8)
         
-        for i in range(Ntrain):
-            xtrain_mosaic[i,:,:] = make_jumbled_image(xtrain, ytrain, i, background)
-            if i == 24:
-                for j in range(25):
-                    plt.subplot(5,10,2*j+1)
-                    plt.imshow(xtrain_mosaic[j,:,:].squeeze(), cmap='gray')
-                    plt.gca().axes.xaxis.set_visible(False)
-                    plt.gca().axes.yaxis.set_visible(False)
-                    plt.subplot(5,10,2*j+2)
-                    plt.imshow(xtrain[j], cmap='gray')
-                    plt.gca().axes.xaxis.set_visible(False)
-                    plt.gca().axes.yaxis.set_visible(False)
-                plt.show()
+        # No paralellization
+        if num_workers == 1 or num_workers == 0:
+            for i in range(Ntrain):
+                xtrain_mosaic[i,:,:] = make_jumbled_image(xtrain, ytrain, i, background)
+            
+            for i in range(Ntest):
+                xtest_mosaic[i,:,:] = make_jumbled_image(xtest, ytest, i, background)
         
-        for i in range(Ntest):
-            xtest_mosaic[i,:,:] = make_jumbled_image(xtest, ytest, i, background)
+        # Data parallelization:
+        else:
+            if num_workers == -1:
+                num_workers = mp.cpu_count()
+            pool = mp.Pool(num_workers)
+            
+            # Start workers
+            for worker_id in range(num_workers):
+                pool.apply_async(wrap_parallel,
+                                 args=(make_jumbled_image, worker_id, num_workers,
+                                       (xtrain,xtest), (ytrain,ytest),
+                                       (xtrain_mosaic,xtest_mosaic)),
+                                 kwds={'background': background})
+            pool.close()
+            pool.join()
         
     
     '''
@@ -84,7 +112,7 @@ def make(background='self', construction='tilex8', overwrite=False):
         plt.gca().axes.yaxis.set_visible(False)
     plt.show()
     '''
-    ### Save the results ###                            # TODO: Figure this out :(
+    ### Save the results ###
     mnist_mosaic = {'training_images': xtrain_mosaic,
                     'training_labels': ytrain,
                     'testing_images': xtest_mosaic,
@@ -114,31 +142,32 @@ def select_indices(labels, idx, background, N):
         probs = [p / sum(probs) for p in probs]
         inds = np.random.choice(len(labels), (N,), False, probs)
     
-    print('Selecting \'{}\' indices for label {}:'.format(background, labels[idx]))
-    print('  '.join([str(labels[i]) for i in inds]))
-    
     return inds
 
 
-# Create a composite of image xtrain[idx] by tiling images specified by the background parameter
-def make_tile_image(xtrain, ytrain, idx, background='self', ntile=8):
+# Create a composite of image dataset[idx] by tiling images specified by the background parameter
+def make_tile_image(dataset, labels, idx, background='self', ntile=8):
     # Select n*n digits to make up composite digit
-    inds = select_indices(ytrain, idx, background, ntile*ntile)
+    inds = select_indices(labels, idx, background, ntile*ntile)
     
-    xlist = [xtrain[ind] for ind in inds] # List of images
+    xlist = [dataset[ind] for ind in inds] # List of images
     xrows = [np.concatenate(tuple(xlist[i*ntile:(i+1)*ntile]), axis=1) for i in range(ntile)] # List of concat'd rows
     xtile = np.concatenate(tuple(xrows), axis=0) # Full tiled image
     
     if xtile.shape[0] != 224:
         xtile = cv2.reshape(xtile, dsize=(224,224))
+    
+    # Subtract the original image
+    xtile = np.minimum(xtile, cv2.resize(dataset[idx], dsize=(224,224)))
+    
     return xtile
 
 
-# Create a composite of image xtrain[idx] by randomly placing images specified by
+# Create a composite of image dataset[idx] by randomly placing images specified by
 #    the background parameter
-def make_jumbled_image(xtrain, ytrain, idx, background='self'):
+def make_jumbled_image(dataset, labels, idx, background='self'):
     # Resize target image and start blank canvas
-    field = cv2.resize(xtrain[idx], dsize=(224,224))
+    field = cv2.resize(dataset[idx], dsize=(224,224))
     img = np.zeros_like(field, dtype=np.uint8)
     
     # Slim the digit to make the final image more legible
@@ -147,11 +176,11 @@ def make_jumbled_image(xtrain, ytrain, idx, background='self'):
     orig = np.sum(field)
     
     # Choose indices of component images (30 is a reasonable upper limit)
-    inds = select_indices(ytrain, idx, background, 30)
+    inds = select_indices(labels, idx, background, 30)
     
     # Add component digits one by one
     for ind in inds:
-        img, field = add_component_digit(img, field, xtrain[ind])
+        img, field = add_component_digit(img, field, dataset[ind])
         if np.sum(field) < orig * 0.01:             #TODO: Tune this threshold
             break
     return img
@@ -212,6 +241,26 @@ def choose_random_point(field):
     c = idx % shape[0]
     
     return r,c
+
+    
+# Data-parallel wrapper for make_tile_image() and make_jumbled_image().
+#    Processes a chunk of both the training set and test set
+def wrap_parallel(func, worker_id, num_workers, in_datasets, in_labels, out_datasets, **kwargs):
+    # For each dataset:
+    for in_dataset, labels, out_dataset in zip(in_datasets, in_labels, out_datasets):
+        # Total images to divide up
+        N = len(in_dataset)
+        # Images per worker
+        chunk = (N + num_workers - 1) // num_workers # Divide by num_workers, round up
+        # Indices of this worker's chunk
+        start = chunk*worker_id
+        end = min(N, chunk*(worker_id+1)
+        # Process chunk
+        kwargs['dataset'] = in_dataset
+        kwargs['labels'] = labels
+        for i in range(start,end):
+            kwargs['idx'] = i
+            out_dataset[i,:,:] = func(**kwargs)
 
 
 # Load a dataset from a .npy file saved by make()
