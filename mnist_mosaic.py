@@ -6,11 +6,12 @@ import pickle
 import os
 import random
 import multiprocessing as mp
+import scipy.sparse as sparse
 
 DATA_DIR = 'mnist_data'
 
-    
-def make(background='self', construction='tilex8', overwrite=False, num_workers=-1):
+def make(background='correlated', construction='jumble', fname=None, overwrite=False, num_workers=-1):
+
     backgrounds = ['self', 'same_label', 'correlated', 'wrong_label']
     constructions = ['tilex8', 'tilex28', 'jumble']
     
@@ -20,7 +21,8 @@ def make(background='self', construction='tilex8', overwrite=False, num_workers=
     assert num_workers >= -1, 'Invalid number of parallel workers: {}'.format(num_workers)
     
     # Check for output file
-    fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
+    if not fname:
+        fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
     fname = os.path.join(DATA_DIR, fname)
     if os.path.exists(fname) and not overwrite:
         return
@@ -278,7 +280,7 @@ def choose_random_point(field):
     
     # Convert into 2D indices
     r = idx // shape[1]
-    c = idx % shape[0]
+    c = idx % shape[1]
     
     return r,c
 
@@ -304,6 +306,27 @@ def wrap_parallel(func, worker_id, num_workers, **kwargs):
     return start, end, results
 
 
+# Save a dataset into two files: fname.npz and fname.np
+def save(data, labels, fname):
+    data_file = fname if fname.endswith('.npz') else fname + '.npz'
+    with open(data_file, 'wb') as f:
+        sparse.save_npz(f, data)
+    label_file = fname if fname.endswith('.np') else fname + '.np'
+    with open(label_file, 'wb') as f:
+        np.save(f, labels)
+
+
+# Load a dataset from two files: fname.npz and fname.np
+def load(fname):
+    data_file = fname if fname.endswith('.npz') else fname + '.npz'
+    with open(data_file, 'rb') as f:
+        data = sparse.load_npz(data_file)
+    label_file = fname if fname.endswith('.np') else fname + '.np'
+    with open(label_file, 'rb') as f:
+        labels = np.load(label_file).item()
+    return (data,labels)
+    
+'''
 # Load a dataset from a .npy file saved by make()
 def load(background='self', construction='tilex8'):
     fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
@@ -315,6 +338,7 @@ def load(background='self', construction='tilex8'):
     with open(fname, 'rb') as f:
         mnist_mos = np.load(f, allow_pickle=True).item()
     return mnist_mos['training_images'], mnist_mos['training_labels'], mnist_mos['testing_images'], mnist_mos['testing_labels']
+'''
 
 if __name__ == '__main__':
     make('correlated', 'jumble')
