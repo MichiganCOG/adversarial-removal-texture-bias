@@ -1,235 +1,144 @@
 import numpy as np
-from matplotlib import pyplot as plt
-import mnist
-import cv2
-import pickle
-import os
-import random
-import multiprocessing as mp
 import scipy.sparse as sparse
+import os
+import cv2
+import random
+import mnist
+import multiprocessing as mp
+from matplotlib import pyplot as plt
 
 DATA_DIR = 'mnist_data'
 
-def make(background='correlated', construction='jumble', fname=None, overwrite=False, num_workers=-1):
-
-    backgrounds = ['self', 'same_label', 'correlated', 'wrong_label']
-    constructions = ['tilex8', 'tilex28', 'jumble']
+'''
+Make the mosaic dataset as requested and save it.
+Inputs:
+ - mode: Determines which component digits are used to make up the composite image
+    - 'self': Components are each a copy of the target composite image
+    - 'same_label': Components are randomly chosen from images with same label as composite image
+    - 'different_label': Components are randomly chosen from images with labels different from
+                         the composite image's label
+    - 'correlated': Components are chosen randomly, with higher probability given to images
+                    with the same label as the composite image
+    - 'anticorrelated': Same as 'correlated', but with lower probability given to same-label images
+    - 'wrong_label': Same as 'correlated', but higher probability is given to images with a
+                    label chosen at random from the set of incorrect labels
+    - 'uncorrelated': Choose components at random, disregarding label
+ - dset: Which set(s) to make ('train', 'test', or 'both')
+ - fname: Filename base to save the dataset(s) to. Exclude extensions.
+ - overwrite: If true, overwrites existing files with same name
+ - num_workers: Number of parallel workers to do data generation. If -1, uses max available.
+'''     
+def make(mode='correlated', dset='both', fname=None, overwrite=False, num_workers=-1):
     
-    # Input validation
-    assert background in backgrounds, 'Invalid choice of background setting: {} (valid choices are [{}]'.format(background, ','.join(backgrounds))
-    assert construction in constructions, 'Invalid choice of construction setting: {} (valid choices are [{}]'.format(construction, ','.join(constructions))
-    assert num_workers >= -1, 'Invalid number of parallel workers: {}'.format(num_workers)
+    # Validate inputs
+    modes = ['self', 'same_label', 'different_label', 'correlated', 'anticorrelated', 'wrong_label', 'uncorrelated']
+    assert mode in modes, 'Invalid mode: {} (valid choices are [{}]'.format(mode, ','.join(modes))
+    dsets = ['train','test','both']
+    assert dset in dsets, 'Invalid dataset: {} (valid choices are [{}]'.format(dset, ','.join(dsets))
+    assert num_workers >= -1, 'Invalid number of workers: {}'.format(num_workers)
+    fname = mode if fname is None else fname
+    fname = fname if os.path.isabs(fname) else os.path.join(DATA_DIR, fname)
     
-    # Check for output file
-    if not fname:
-        fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
-    fname = os.path.join(DATA_DIR, fname)
-    if os.path.exists(fname) and not overwrite:
-        return
-        
-    # Load data
+    # Load MNIST, convert to lists of images
     print('Loading MNIST...')
     xtrain, ytrain, xtest, ytest = mnist.load()
+    Ntrain = xtrain.shape[0]
+    Ntest = xtest.shape[0]
+    xtrain = [xtrain[i,:].reshape([28,28]) for i in range(Ntrain)]
+    xtest = [xtest[i,:].reshape([28,28]) for i in range(Ntest)]
     
-    # Convert to lists of images
-    xtrain = [xtrain[i,:].reshape([28,28]) for i in range(xtrain.shape[0])] 
-    xtest = [xtest[i,:].reshape([28,28]) for i in range(xtest.shape[0])]
+    # Make training set
+    if dset in ('train','both'):
+        print('Making training set...')
+        trainname = fname if dsets == 'train' else fname + '_train'
+        make_dset(xtrain, ytrain, mode, trainname, overwrite, num_workers)
     
-    Ntrain = len(xtrain)
-    Ntest = len(xtest)
+    # Make test set
+    if dset in ('test', 'both'):
+        print('Making test set...')
+        testname = fname if dsets == 'test' else fname + '_test'
+        make_dset(xtest, ytest, mode, testname, overwrite, num_workers)
+    
+   
+# Make one dataset (train or test) from the original MNIST version
+def make_dset(data, labels, mode, fname=None, overwrite=False, num_workers=-1):
+    
+    data_file = fname if fname.endswith('.npz') else fname + '.npz'
+    if os.path.exists(data_file) and not overwrite:
+        print('File {} exists. Skipping...'.format(data_file))
+        return
     
     # Initialize results
     print('Initializing results...')
-    xtrain_mosaic = np.zeros([Ntrain, 224, 224], dtype=np.uint8)
-    xtest_mosaic = np.zeros([Ntest, 224, 224], dtype=np.uint8)
+    N = len(data)
+    data_out = np.zeros([N, 224, 224], dtype=np.uint8)
+    labels_out = [None]*N
     
-    # Define callback functions for parallelization
-    def callback_train(results):
-        xtrain_mosaic[results[0]:results[1],:,:] = results[2]
-    def callback_test(results):
-        xtest_mosaic[results[0]:results[1],:,:] = results[2]
+    # Define callback function for parallel workers
+    def callback(results):
+        data_out[results[0]:results[1],:,:] = results[2]
+        labels_out[results[0]:results[1]] = results[3]
     
-    ### Construct mosaic dataset ###
-    # Tiled construction
-    ntiles = {'tilex8': 8, 'tilex28': 28}
-    if construction in ntiles:
-        n = ntiles[construction]
+    # Without parallelization, construct dataset one image at a time
+    if num_workers == 1 or num_workers == 0:
+        print('Making dataset...')
+        print('[0/{}]'.format(N))
+        for i in range(N):
+            data_out[i,:,:],labels_out[i] = make_one_image(data, labels, i, mode)
+            if i % 10 == 9:
+                print('[{}/{}]'.format(i+1,N))
+    
+    # With parallelization, split up dataset evenly and assign each worker a chunk
+    else:
+        if num_workers == -1:
+            num_workers = mp.cpu_count()
+        print('Opening pool of {} workers...'.format(num_workers))
+        pool = mp.Pool(num_workers)
         
-        # No parallelization
-        if num_workers == 1 or num_workers == 0:
-            print('Making training set...')
-            for i in range(Ntrain):
-                xtrain_mosaic[i,:,:] = make_tile_image(xtrain, ytrain, i, background, n)
-            print('Making test set...')
-            for i in range(Ntest):
-                xtest_mosaic[i,:,:] = make_tile_image(xtest, ytest, i, background, n)
-                
-        # Data parallelization
-        else:
-            if num_workers == -1:
-                num_workers == mp.cpu_count()
-            print('Opening pool of {} workers...'.format(num_workers))
-            pool = mp.Pool(num_workers)
-            
-            # Start workers for training set
-            for worker_id in range(num_workers):
-                pool.apply_async(wrap_parallel,
-                                 args=(make_tile_image, worker_id, num_workers),
-                                 kwds={'dataset': xtrain,
-                                       'labels': ytrain,
-                                       'background': background,
-                                       'ntile': n},
-                                 callback=callback_train)
-            pool.close()
-            pool.join()
-            
-            # Start workers for test set
-            pool = mp.Pool(num_workers)
-            for worker_id in range(num_workers):
-                pool.apply_async(wrap_parallel,
-                                 args=(make_tile_image, worker_id, num_workers),
-                                 kwds={'dataset': xtest,
-                                       'labels': ytest,
-                                       'backgroud': background,
-                                       'ntile': n},
-                                 callback=callback_test)
-            pool.close()
-            pool.join()
-            
-            
-    # Jumble construction    
-    elif construction == 'jumble':
+        # Start each worker with a call to helper function make_one_image_chunk
+        for worker_id in range(num_workers):
+            pool.apply_async(make_one_image_chunk,
+                             args=(worker_id, num_workers),
+                             kwds={'data': data,
+                                   'labels': labels,
+                                   'mode': mode},
+                             callback=callback)
+        pool.close()
+        pool.join() # Block execution until all workers are done
+    
+    # Save the dataset
+    save(data_out, labels_out, fname)
         
-        # No paralellization
-        if num_workers == 1 or num_workers == 0:
-            print('Making training set...')
-            for i in range(Ntrain):
-                xtrain_mosaic[i,:,:] = make_jumbled_image(xtrain, ytrain, i, background)
-            print('Making test set...')
-            for i in range(Ntest):
-                xtest_mosaic[i,:,:] = make_jumbled_image(xtest, ytest, i, background)
-        
-        # Data parallelization:
-        else:
-            if num_workers == -1:
-                num_workers = mp.cpu_count()
-            print('Opening pool of {} workers...'.format(num_workers))
-            pool = mp.Pool(num_workers)
-            
-            # Start workers for training set
-            for worker_id in range(num_workers):
-                pool.apply_async(wrap_parallel,
-                                 args=(make_jumbled_image, worker_id, num_workers),
-                                 kwds={'dataset': xtrain,
-                                       'labels': ytrain,
-                                       'background': background},
-                                 callback=callback_train)
-            pool.close()
-            pool.join()
-            
-            # Start workers for test set
-            pool = mp.Pool(num_workers)
-            for worker_id in range(num_workers):
-                pool.apply_async(wrap_parallel,
-                                 args=(make_jumbled_image, worker_id, num_workers),
-                                 kwds={'dataset': xtest,
-                                       'labels': ytest,
-                                       'background': background},
-                                 callback=callback_test)
-            pool.close()
-            pool.join()
-        
-    
-    '''
-    ### Visualize the dataset ###
-    for i in range(25):
-        plt.subplot(5,10,2*i+1)
-        plt.imshow(xtrain_mosaic[i,:,:].squeeze(), cmap='gray')
-        plt.gca().axes.xaxis.set_visible(False)
-        plt.gca().axes.yaxis.set_visible(False)
-        plt.subplot(5,10,2*i+2)
-        plt.imshow(xtrain[i], cmap='gray')
-        plt.gca().axes.xaxis.set_visible(False)
-        plt.gca().axes.yaxis.set_visible(False)
-    plt.show()
-    '''
-    ### Save the results ###
-    print('Saving results...')
-    mnist_mosaic = {'training_images': xtrain_mosaic,
-                    'training_labels': ytrain,
-                    'testing_images': xtest_mosaic,
-                    'testing_labels': ytest}
-    with open(fname, 'wb') as f:
-        np.save(f, mnist_mosaic)
 
-
-# Choose N indices of digits to make up the composite digit based on the background type
-def select_indices(labels, idx, background, N):
-    # Use the composite digit N times
-    if background == 'self':
-        inds = [idx]*N
-    # Use N digits of the same label as composite digit
-    elif background == 'same_label':
-        probs = [1. if y == labels[idx] else 0. for y in labels]
-        probs = [p / sum(probs) for p in probs]
-        inds = np.random.choice(len(labels), (N,), False, probs)
-    # Choose digits randomly, favoring same-labeled digits highly
-    elif background == 'correlated':
-        probs = [1. if y == labels[idx] else 0.05 for y in labels]       #TODO: tune this
-        probs = [p / sum(probs) for p in probs]
-        inds = np.random.choice(len(labels), (N,), False, probs)
-    # Use N digits whose labels are different from composite digit's
-    elif background == 'wrong_label':
-        probs = [0. if y == labels[idx] else 1. for y in labels]
-        probs = [p / sum(probs) for p in probs]
-        inds = np.random.choice(len(labels), (N,), False, probs)
-    
-    return inds
-
-
-# Create a composite of image dataset[idx] by tiling images specified by the background parameter
-def make_tile_image(dataset, labels, idx, background='self', ntile=8):
-    # Select n*n digits to make up composite digit
-    inds = select_indices(labels, idx, background, ntile*ntile)
-    
-    xlist = [dataset[ind] for ind in inds] # List of images
-    xrows = [np.concatenate(tuple(xlist[i*ntile:(i+1)*ntile]), axis=1) for i in range(ntile)] # List of concat'd rows
-    xtile = np.concatenate(tuple(xrows), axis=0) # Full tiled image
-    
-    if xtile.shape[0] != 224:
-        xtile = cv2.reshape(xtile, dsize=(224,224))
-    
-    # Subtract the original image
-    xtile = np.minimum(xtile, cv2.resize(dataset[idx], dsize=(224,224)))
-    
-    return xtile
-
-
-# Create a composite of image dataset[idx] by randomly placing images specified by
-#    the background parameter
-def make_jumbled_image(dataset, labels, idx, background='self'):
+# Makes one composite image and returns it, along with the label and metadata for it
+def make_one_image(data, labels, idx, mode):
     # Resize target image and start blank canvas
-    field = cv2.resize(dataset[idx], dsize=(224,224))
+    field = cv2.resize(data[idx], dsize=(224,224))
     img = np.zeros_like(field, dtype=np.uint8)
     
-    # Slim the digit to make the final image more legible
+    # Slim the digit to make the final image more legible. Tweak this if you want.
     field = minpool_field(field, 20)
-    # Track original footprint of digit
-    orig = np.sum(field)
+    # Track the original total footprint of the digit
+    orig_fprint = np.sum(field)
     
-    # Choose indices of component images (30 is a reasonable upper limit)
-    inds = select_indices(labels, idx, background, 30)
+    # Choose indices of component images (30 is a reasonable upper limit in practice)
+    #    wrong_label only used if mode is 'wrong_label'; otherwise None
+    inds, wrong_label = select_indices(labels, idx, mode, 30)
     
-    # Add component digits one by one
+    # Initialize metadata entry
+    metadata = {'label': labels[idx], 'components': []}
+    if mode == 'wrong_label':
+        metadata['wrong_label': wrong_label]
+    
+    # Add components one by one
     for ind in inds:
-        img, field = add_component_digit(img, field, dataset[ind])
-        if np.sum(field) < orig * 0.01:             #TODO: Tune this threshold
+        img, field, metadata = add_component_digit(img, field, data[ind], labels[ind], ind, metadata)
+        if np.sum(field) < orig_fprint * 0.01: # Tune this if you want
             break
-    return img
+    return img, metadata
 
 
-# Replace each pixel in the field with the darkest pixel no more than rad pixels away in
-#   either direction
+# Apply a minpool operation with square radius to the field
 def minpool_field(field, rad):
     result = np.zeros_like(field)
     H,W = field.shape
@@ -244,13 +153,15 @@ def minpool_field(field, rad):
 
 
 # Add a single component image to the composite at a random location
-def add_component_digit(img, field, component):
+def add_component_digit(img, field, component, label, idx, metadata):
     # Make sure there are places left to put the digit
     if not np.any(field):
-        return img, field
+        return img, field, metadata
     
-    # Select a point in the image
-    r,c = choose_random_point(field)
+    # Select a point in the image by reinterpreting the field as a probability distribution
+    coord = np.random.choice(224*224, None, False, [f / np.sum(field) for f in field.reshape([-1,])])
+    r = coord // field.shape[1]
+    c = coord % field.shape[1]
     
     # Find footprint of component
     h,w = component.shape
@@ -258,87 +169,110 @@ def add_component_digit(img, field, component):
     r0 = min(H-h, max(0, r-(h//2)))
     c0 = min(W-w, max(0, c-(w//2)))
     
-    # Add component to composite
+    # Add component to image
     img[r0:r0+h, c0:c0+w] = np.maximum(img[r0:r0+h, c0:c0+w], component)
     
     # Remove footprint from field
     field[r0:r0+h, c0:c0+w] = 0
     
-    return img,field
+    # Add component to metadata
+    metadata['components'].append({'x': c, 'y': r, 'label': label, 'index': idx})
+    
+    return img, field, metadata
 
 
-# Choose a random point within the remaining composite field
-def choose_random_point(field):
-    # Reshape into 1D array
-    shape = field.shape
-    field = field.reshape([-1,])
-    
-    # Transform a uniform random point choice into the proper distribution by inverting
-    #   the cumulative distribution of the field
-    threshold = random.random() * field.sum()
-    idx = sum(np.cumsum(field) < threshold)
-    
-    # Convert into 2D indices
-    r = idx // shape[1]
-    c = idx % shape[1]
-    
-    return r,c
+# Choose N indices of digits to make up the composite digit based on the mode. Output fake_label
+#    is None unless mode is 'wrong_label'.
+def select_indices(labels, idx, mode, N):
 
+    fake_label = None
     
-# Data-parallel wrapper for make_tile_image() and make_jumbled_image()
-def wrap_parallel(func, worker_id, num_workers, **kwargs):
-    print('[Worker {}/{}] Started'.format(worker_id+1, num_workers))
+    # Use the composite digit N times:
+    if mode == 'self':
+        return [idx]*N
+    # (Rest of modes use probabilistic selection)
+    # Use N digits of the same label as composite digit
+    elif mode == 'same_label':
+        probs = [1. if y == labels[idx] else 0. for y in labels]
+    # Use N digits of labels different than composite digit's
+    elif mode == 'different_labels':
+        probs = [0. if y == labels[idx] else 1. for y in labels]
+    # Choose digits randomly, favoring same-labeled digits highly
+    elif mode == 'correlated':
+        probs = [1. if y == labels[idx] else 0.05 for y in labels]
+    # Choose digits randomly, favoring differently-labeled digits highly
+    elif mode == 'anticorrelated':
+        probs = [0.05 if y == labels[idx] else 1. for y in labels]
+    # Pick a wrong label, then choose digits as if it were correct and the mode was 'correlated'
+    elif mode == 'wrong_label':
+        fake_label = np.random.choice(list(range(labels[idx])) + list(range(labels[idx]+1,10)))
+        probs = [1. if y == fake_label else 0.05 for y in labels]
+    # Ignore labels and choose randomly. What's life without a little whimsy?
+    elif mode == 'random':
+        probs = [1.]*N
+    
+    # Normalize probabilities and choose digits
+    probs = [p / sum(probs) for p in probs]
+    inds = np.random.choice(len(labels), (N,), False, probs)
+    
+    return inds, fake_label
+
+
+# Call make_one_image several times in serial, processing one chunk of the dataset
+def make_one_image_chunk(worker_id, num_workers, **kwargs):
+    
     # Total images to divide up
-    N = len(kwargs['dataset'])
+    #N = len(kwargs['data']) TODO: Uncomment this
+    N = 25
     # Images per worker
-    chunk = (N + num_workers - 1) // num_workers # Divide by num_workers, round up
+    chunk_size = (N + num_workers - 1) // num_workers # Div by num_workers, round up
     # Indices of this worker's chunk
-    start = chunk*worker_id
-    end = min(N, chunk*(worker_id+1))
+    start = chunk_size * worker_id
+    end = min(N, chunk_size * (worker_id+1))
+    print('[Worker {}/{}] Started: indices {}:{}'.format(worker_id+1, num_workers, start, end-1))
+    
     # Process chunk
-    results = np.zeros((end-start,224,224), dtype=np.uint8)
+    data_out = np.zeros((end-start, 224, 224), dtype=np.uint8)
+    labels_out = [None]*(end-start)
     for i in range(start,end):
         kwargs['idx'] = i
-        results[i-start,:,:] = func(**kwargs)
-        #if (i+1) % (chunk//10) == 0:
-        print('[Worker {}/{}] Processed {}/{} (index {} in [{},{}))'.format(worker_id+1, num_workers, i-start+1, end-start, i, start, end))
+        data_out[i-start,:,:], labels_out[i-start] = make_one_image(**kwargs)
+        print('[Worker {}/{}] Processed {}/{} (index {} in {}:{})'.format(worker_id+1, num_workers, i-start+1, end-start, i, start, end-1))
+    
     # Return results
-    return start, end, results
+    return start, end, data_out, labels_out
 
-
+    
 # Save a dataset into two files: fname.npz and fname.np
 def save(data, labels, fname):
+    # Sparsify the dataset to save space
+    data = sparse.csr_matrix(data.reshape([data.shape[0],-1]))
     data_file = fname if fname.endswith('.npz') else fname + '.npz'
     with open(data_file, 'wb') as f:
         sparse.save_npz(f, data)
+        
     label_file = fname if fname.endswith('.np') else fname + '.np'
     with open(label_file, 'wb') as f:
         np.save(f, labels)
 
 
 # Load a dataset from two files: fname.npz and fname.np
-def load(fname):
+def load(fname, label_only=False, dense=True):
+    fname = fname if os.path.isabs(fname) else os.path.join(DATA_DIR, fname)
     data_file = fname if fname.endswith('.npz') else fname + '.npz'
     with open(data_file, 'rb') as f:
         data = sparse.load_npz(data_file)
+    if dense:
+        data = data.todense().getA().reshape([-1,224,224]) # Unpack sparse representation
+        
     label_file = fname if fname.endswith('.np') else fname + '.np'
     with open(label_file, 'rb') as f:
-        labels = np.load(label_file).item()
+        labels = np.load(label_file)
+    if label_only: # Throw out metadata if requested
+        labels = [y['label'] for y in labels]
     return (data,labels)
-    
-'''
-# Load a dataset from a .npy file saved by make()
-def load(background='self', construction='tilex8'):
-    fname = 'mnist_mosaic_{}_{}.npy'.format(background, construction)
-    fname = os.path.join(DATA_DIR, fname)
-    if not os.path.exists(fname):
-        print('No file \'{}\' to load. Call make(\'{}\', \'{}\') first.'.format(fname, background, construction))
-        return None, None, None, None
-    # Load file
-    with open(fname, 'rb') as f:
-        mnist_mos = np.load(f, allow_pickle=True).item()
-    return mnist_mos['training_images'], mnist_mos['training_labels'], mnist_mos['testing_images'], mnist_mos['testing_labels']
-'''
+
 
 if __name__ == '__main__':
-    make('correlated', 'jumble')
+    make('correlated', fname='Mosaic_MNIST')
+
