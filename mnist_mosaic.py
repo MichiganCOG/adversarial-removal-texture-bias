@@ -222,8 +222,7 @@ def select_indices(labels, idx, mode, N):
 def make_one_image_chunk(worker_id, num_workers, **kwargs):
     
     # Total images to divide up
-    #N = len(kwargs['data']) TODO: Uncomment this
-    N = 25
+    N = len(kwargs['data'])
     # Images per worker
     chunk_size = (N + num_workers - 1) // num_workers # Div by num_workers, round up
     # Indices of this worker's chunk
