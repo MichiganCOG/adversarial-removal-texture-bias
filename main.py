@@ -47,10 +47,8 @@ def main(args):
 
 
     print('Making optimizers...')
-    task_params = [p for n,p in model.named_parameters() if 'featurizer' in n or 'task_branch' in n]
-    task_optim = optim.SGD(task_params, lr = args.lr, momentum = args.momentum)
-    adv_params = [p for n,p in model.named_parameters() if 'adversary_branch' in n]
-    adv_optim = optim.SGD(adv_params, lr = args.adv_lr, momentum = args.adv_momentum)
+    task_optim = optim.SGD(model.task_parameters(), lr=args.lr, momentum=args.momentum)
+    adv_optim = optim.SGD(model.adversary_parameters(), lr=args.adv_lr, momentum=args.adv_momentum)
 
     optimizer = optim_wrapper(task_optim, adv_optim, args.eta)
     criterion = nn.CrossEntropyLoss()

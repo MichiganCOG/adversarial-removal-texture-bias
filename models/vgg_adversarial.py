@@ -78,10 +78,11 @@ class VGG_Adversarial(nn.Module):
         return (y1,y2)
     
     
-    #def adversary(self, x):
-    #    x = self.featurizer(x)
-    #    x = self.adversary_branch(x)
-    #    return x
+    def task_parameters(self):
+        return [p for n,p in self.named_parameters() if 'featurizer' in n or 'task_branch' in n]
+    
+    def adversary_parameters(self):
+        return [p for n,p in self.named_parameters() if 'adversary_branch' in n]
 
         
 # Given the task model, return the model's three branches: featurizer, task branch, and adversary branch
