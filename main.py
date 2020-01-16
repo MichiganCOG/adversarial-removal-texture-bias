@@ -194,7 +194,7 @@ def validate(val_loader, model, criterion, args):
     progress = ProgressMeter(
         len(train_loader),
         [batch_time, task_losses, adv_losses, top1, top5],
-        prefix="Ep: [{}]".format(epoch))
+        prefix="[Validation]")
     
     # Switch to evaluate mode
     model.eval()

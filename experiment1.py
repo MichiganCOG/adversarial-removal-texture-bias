@@ -8,14 +8,14 @@ import pdb
 import time
 
 import torch
-import torch.nn asnn
+import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as transforms
 
 import models
 from adversarial_optim import AdversarialWrapper as optim_wrapper
 import mnist_mosaic
-from pytorch_utils import MnistMosaicDataset
+from pytorch_utils import MnistMosaicDataset, grayscale2color
 from utils import AverageMeter, ProgressMeter
 
 def main():
@@ -34,11 +34,11 @@ def main():
     # Access data
     print('Accessing data...')
     train_dataset = MnistMosaicDataset(
-                    'mnist_data/mosaic_correlated_train.npz',
+                    'mosaic_correlated_train',
                     transform=transforms.ToTensor(),
                     label_only=True)
     test_dataset = MnistMosaicDataset(
-                    'mnist_data/mosaic_correlated_test.npz',
+                    'mosaic_correlated_test',
                     transform=transforms.ToTensor(),
                     label_only=True)
 
@@ -47,7 +47,7 @@ def main():
     train_loader = torch.utils.data.DataLoader(
                     train_dataset, batch_size=64, shuffle=True, num_workers=4,
                     pin_memory=False, sampler=None)
-    test_loader = torch.utils.data.DataLoade(
+    test_loader = torch.utils.data.DataLoader(
                     test_dataset, batch_size=64, shuffle=False, num_workers=4,
                     pin_memory=False, sampler=None)
     
@@ -55,16 +55,17 @@ def main():
     print('Pretraining task branch...')
     optimizer.mode('task')
     for epoch in range(0, 10):
-        train_one_epoch(train_loader, model, optimizer, criterion, epoch) #TODO: add other args
+        train_one_epoch(train_loader, model, optimizer, criterion, epoch)
     
     # Pretrain adversary branch
     print('Pretraining adversary branch...')
     optimizer.mode('adversary')
     for epoch in range(0, 10):
-        train_one_epoch(train_loader, model, optimizer, criterion, epoch) #TODO: add other args
+        train_one_epoch(train_loader, model, optimizer, criterion, epoch)
         
     # Evaluate and checkpoint
-    acc1 = evaluate(test_loader, model, criterion) #TODO: add other args
+    print('Evaluating pretrained model...')
+    acc1 = evaluate(test_loader, model, criterion)
     best_acc1 = acc1
     save_checkpoint({
         'epoch': 0,
@@ -72,15 +73,16 @@ def main():
         'state_dict': model.state_dict(),
         'best_acc1': best_acc1,
         'optimizer': optimizer.state_dict()},
-        True)
+        True,
+        'trained_models/exp1_pretrained.pth.tar')
     
     # Train network
     print('Training network...')
-    optmiizer.mode('train')
+    optimizer.mode('train')
     for epoch in range(0, 20):
-        train_one_epoch(train_loader, model, optimizer, criterion, epoch) #TODO: add other args
+        train_one_epoch(train_loader, model, optimizer, criterion, epoch)
         
-        acc1 = evaluate(test_loader, model, criterion) #TODO: add other args
+        acc1 = evaluate(test_loader, model, criterion)
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
         save_checkpoint({
@@ -90,6 +92,8 @@ def main():
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict()},
             is_best)
+    
+    print('Done')
     
 def train_one_epoch(train_loader, model, optimizer, criterion, epoch):
     
@@ -108,6 +112,12 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch):
     
     end = time.time()
     for i, (images, target) in enumerate(train_loader):
+    
+        # Expand images to 3-channel
+        images = grayscale2color(images)
+        
+        # Convert to right data type
+        target = target.long()
         
         # Compute outputs and losses
         (task_output,adv_output) = model(images)
@@ -119,7 +129,7 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch):
         if optimizer.step_type() == 'adversary':
             loss = adv_loss
         elif optimizer.step_type() == 'task':
-            loss = task_loss if optimizer._mode == 'task' else combined loss
+            loss = task_loss if optimizer._mode == 'task' else combined_loss
         
         # Measure accuracy and record losses
         acc1, acc5 = accuracy(task_output, target, topk=(1,5))
@@ -149,9 +159,9 @@ def evaluate(test_loader, model, criterion):
     top1 = AverageMeter('Acc@1', ':5.2f')
     top5 = AverageMeter('Acc@5', ':5.2f')
     progress = ProgressMeter(
-        len(train_loader),
+        len(test_loader),
         [batch_time, task_losses, adv_losses, top1, top5],
-        prefix="Ep: [{}]".format(epoch))
+        prefix="[Testing]")
     
     # Switch to evaluate mode
     model.eval()
@@ -161,13 +171,19 @@ def evaluate(test_loader, model, criterion):
         
         for i, (images, target) in enumerate(test_loader):
             
+            # Expand images to 3-channel
+            images = grayscale2color(images)
+            
+            # Convert to right data type
+            target = target.long()
+            
             # Compute outputs and losses
             task_output, adv_output = model(images)
             task_loss = criterion(task_output, target)
             adv_loss = criterion(adv_output, target)
             
             # Measure accuracy
-            acc1, acc5 = accuracy(output, target, topk=(1,5))
+            acc1, acc5 = accuracy(task_output, target, topk=(1,5))
             task_losses.update(task_loss.item(), images.size(0))
             adv_losses.update(adv_loss.item(), images.size(0))
             top1.update(acc1[0], images.size(0))
@@ -182,10 +198,10 @@ def evaluate(test_loader, model, criterion):
             
     return top1.avg
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, filename='trained_models/exp1_checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth.tar')
+        shutil.copyfile(filename, 'trained_models/exp1_model_best.pth.tar')
 
 # From <https://github.com/pytorch/examples/blob/master/imagenet/main.py>
 def accuracy(output, target, topk=(1,)):
@@ -207,4 +223,5 @@ def accuracy(output, target, topk=(1,)):
 
 
 
-
+if __name__ == '__main__':
+    main()

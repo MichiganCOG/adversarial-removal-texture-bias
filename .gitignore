@@ -3,3 +3,4 @@
 __pycache__
 .nfs*
 mnist_data/
+trained_models/
