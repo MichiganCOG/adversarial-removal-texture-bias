@@ -7,7 +7,7 @@ import mnist
 import multiprocessing as mp
 from matplotlib import pyplot as plt
 
-from urllib import request
+import urllib as request
 import gzip
 import shutil
 
@@ -201,7 +201,7 @@ def select_indices(labels, idx, mode, N):
     
     # Use the composite digit N times:
     if mode == 'self':
-        return [idx]*N
+        return [idx]*len(labels)
     # (Rest of modes use probabilistic selection)
     # Use N digits of the same label as composite digit
     elif mode == 'same_label':
@@ -221,7 +221,7 @@ def select_indices(labels, idx, mode, N):
         probs = [1. if y == fake_label else 0.05 for y in labels]
     # Ignore labels and choose randomly. What's life without a little whimsy?
     elif mode == 'inconsistent':
-        probs = [1.]*N
+        probs = [1.]*len(labels)
     
     # Normalize probabilities and choose digits
     probs = [p / sum(probs) for p in probs]

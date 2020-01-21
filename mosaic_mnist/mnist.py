@@ -1,5 +1,5 @@
 import numpy as np
-from urllib import request
+import urllib as request
 import gzip
 import pickle
 import os
@@ -11,7 +11,8 @@ filename = [
 ["test_labels","t10k-labels-idx1-ubyte.gz"]
 ]
 
-DATA_DIR = 'data'
+if __name__ != '__main__':
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
 def download_mnist(overwrite=False):
     base_url = "http://yann.lecun.com/exdb/mnist/"

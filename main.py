@@ -119,7 +119,8 @@ def main(args):
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict()},
-            is_best)
+            is_best,
+            args.checkpoint_dir + 'checkpoint.pth.tar')
 
 
 def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
@@ -258,6 +259,8 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training - '
                     'With Texture Bias Adversary')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
+parser.add_argument('dataset', default='imagenet', choices=['imagenet','mosaic_mnist'],
+                    help='dataset to train/test on')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='vgg11_adv', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + \
                     ' (default: vgg11_adv)')
@@ -309,6 +312,8 @@ parser.add_argument('--prediction', dest='prediction', nargs='?',
 parser.add_argument('--precision', dest='precision', default='float',
                     choices=['half', 'float', 'double'],
                     help='model precision')
+parser.add_argument('--checkpoint-path', default='',
+                    help='path to save checkpoint.pth.tar and model_best.pth.tar')
 
 
 if __name__ == '__main__':
