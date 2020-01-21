@@ -11,7 +11,7 @@ filename = [
 ["test_labels","t10k-labels-idx1-ubyte.gz"]
 ]
 
-DATA_DIR = 'mnist_data'
+DATA_DIR = 'data'
 
 def download_mnist(overwrite=False):
     base_url = "http://yann.lecun.com/exdb/mnist/"

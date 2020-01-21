@@ -1,0 +1,5 @@
+data/*
+*.pth.tar
+*.np
+*.npz
+*.gz

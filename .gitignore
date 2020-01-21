@@ -2,5 +2,4 @@
 *.pth.tar
 __pycache__
 .nfs*
-mnist_data/
 trained_models/

@@ -14,8 +14,7 @@ import torchvision.transforms as transforms
 
 import models
 from adversarial_optim import AdversarialWrapper as optim_wrapper
-import mnist_mosaic
-from pytorch_utils import MnistMosaicDataset, grayscale2color
+import mosaic_mnist
 from utils import AverageMeter, ProgressMeter
 
 def main():
@@ -33,12 +32,12 @@ def main():
     
     # Access data
     print('Accessing data...')
-    train_dataset = MnistMosaicDataset(
-                    'mosaic_correlated_train',
+    train_dataset = mosaic_mnist.MnistMosaicDataset(
+                    'consistent_train',
                     transform=transforms.ToTensor(),
                     label_only=True)
-    test_dataset = MnistMosaicDataset(
-                    'mosaic_correlated_test',
+    test_dataset = mosaic_mnist.MnistMosaicDataset(
+                    'consistent_test',
                     transform=transforms.ToTensor(),
                     label_only=True)
 
@@ -114,7 +113,7 @@ def train_one_epoch(train_loader, model, optimizer, criterion, epoch):
     for i, (images, target) in enumerate(train_loader):
     
         # Expand images to 3-channel
-        images = grayscale2color(images)
+        images = mosaic_mnist.grayscale2color(images)
         
         # Convert to right data type
         target = target.long()
@@ -172,7 +171,7 @@ def evaluate(test_loader, model, criterion):
         for i, (images, target) in enumerate(test_loader):
             
             # Expand images to 3-channel
-            images = grayscale2color(images)
+            images = mosaic_mnist.grayscale2color(images)
             
             # Convert to right data type
             target = target.long()

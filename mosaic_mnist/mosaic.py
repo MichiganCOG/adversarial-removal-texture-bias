@@ -7,37 +7,49 @@ import mnist
 import multiprocessing as mp
 from matplotlib import pyplot as plt
 
-DATA_DIR = 'mnist_data'
+from urllib import request
+import gzip
+import shutil
+
+if __name__ != '__main__':
+    DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
 '''
 Make the mosaic dataset as requested and save it.
 Inputs:
  - mode: Determines which component digits are used to make up the composite image
-    - 'self': Components are each a copy of the target composite image
+    MODES DETAILED IN PAPER:
+    - 'consistent'*: Components are chosen randomly, with higher probability given to images
+                    with the same label as the composite image
+    - 'inconsistent'*: Components are chosen uniformly at random.
+    - 'malicious'*: Same as 'consistent', but higher probability is given to images with a label
+                    chosen at random from the set of wrong labels.
+    OTHER MODES:
+    - 'self': Components are each a copy of the target composite image. Much easier
     - 'same_label': Components are randomly chosen from images with same label as composite image
     - 'different_label': Components are randomly chosen from images with labels different from
                          the composite image's label
-    - 'correlated': Components are chosen randomly, with higher probability given to images
-                    with the same label as the composite image
-    - 'anticorrelated': Same as 'correlated', but with lower probability given to same-label images
-    - 'wrong_label': Same as 'correlated', but higher probability is given to images with a
-                    label chosen at random from the set of incorrect labels
-    - 'uncorrelated': Choose components at random, disregarding label
+    - 'anticonsistent': Same as 'consistent', but with lower probability given to same-label images
  - dset: Which set(s) to make ('train', 'test', or 'both')
- - fname: Filename base to save the dataset(s) to. Exclude extensions.
+ - fname: Filename base to save the dataset(s) to. If absolute, used unchanged. If a filename with no
+        path is given, files will be put in DATA_DIR. Default: value of mode.
  - overwrite: If true, overwrites existing files with same name
  - num_workers: Number of parallel workers to do data generation. If -1, uses max available.
 '''     
 def make(mode='correlated', dset='both', fname=None, overwrite=False, num_workers=-1):
     
     # Validate inputs
-    modes = ['self', 'same_label', 'different_label', 'correlated', 'anticorrelated', 'wrong_label', 'uncorrelated']
+    modes = ['self', 'same_label', 'different_label', 'consistent', 'anticonsistent', 'malicious', 'inconsistent']
     assert mode in modes, 'Invalid mode: {} (valid choices are [{}]'.format(mode, ','.join(modes))
     dsets = ['train','test','both']
     assert dset in dsets, 'Invalid dataset: {} (valid choices are [{}]'.format(dset, ','.join(dsets))
     assert num_workers >= -1, 'Invalid number of workers: {}'.format(num_workers)
+    # Validate and correct filename base
     fname = mode if fname is None else fname
-    fname = fname if os.path.isabs(fname) else os.path.join(DATA_DIR, fname)
+    if not os.path.isabs(fname) and len(os.path.dirname(fname)) == 0:
+        fname = os.path.join(DATA_DIR, fname)
+    if fname.endswith(('.np','.npz')):
+        fname,ext = os.path.splitext(fname)
     
     # Load MNIST, convert to lists of images
     print('Loading MNIST...')
@@ -198,17 +210,17 @@ def select_indices(labels, idx, mode, N):
     elif mode == 'different_labels':
         probs = [0. if y == labels[idx] else 1. for y in labels]
     # Choose digits randomly, favoring same-labeled digits highly
-    elif mode == 'correlated':
+    elif mode == 'consistent':
         probs = [1. if y == labels[idx] else 0.05 for y in labels]
     # Choose digits randomly, favoring differently-labeled digits highly
-    elif mode == 'anticorrelated':
+    elif mode == 'anticonsistent':
         probs = [0.05 if y == labels[idx] else 1. for y in labels]
     # Pick a wrong label, then choose digits as if it were correct and the mode was 'correlated'
-    elif mode == 'wrong_label':
+    elif mode == 'malicious':
         fake_label = np.random.choice(list(range(labels[idx])) + list(range(labels[idx]+1,10)))
         probs = [1. if y == fake_label else 0.05 for y in labels]
     # Ignore labels and choose randomly. What's life without a little whimsy?
-    elif mode == 'random':
+    elif mode == 'inconsistent':
         probs = [1.]*N
     
     # Normalize probabilities and choose digits
@@ -240,38 +252,95 @@ def make_one_image_chunk(worker_id, num_workers, **kwargs):
     
     # Return results
     return start, end, data_out, labels_out
-
     
-# Save a dataset into two files: fname.npz and fname.np
+    
+# Save a dataset into two files: fname.npz and fname.np.
 def save(data, labels, fname):
     # Sparsify the dataset to save space
     data = sparse.csr_matrix(data.reshape([data.shape[0],-1]))
-    data_file = fname if fname.endswith('.npz') else fname + '.npz'
-    with open(data_file, 'wb') as f:
+    with open(fname + '.npz', 'wb') as f:
         sparse.save_npz(f, data)
-        
-    label_file = fname if fname.endswith('.np') else fname + '.np'
-    with open(label_file, 'wb') as f:
+    with open(fname + '.np', 'wb') as f:
         np.save(f, labels)
 
 
 # Load a dataset from two files: fname.npz and fname.np
 def load(fname, label_only=False, dense=True):
-    fname = fname if os.path.isabs(fname) else os.path.join(DATA_DIR, fname)
-    data_file = fname if fname.endswith('.npz') else fname + '.npz'
-    with open(data_file, 'rb') as f:
-        data = sparse.load_npz(data_file)
+    # Remove .np or .npz extension
+    if fname.endswith(('.np','.npz')):
+        fname,ext = os.path.splitext(fname)
+
+    # If fname is absolute, skip this:
+    if not os.path.isabs(fname):
+        # If files exist as is, skip this:
+        if not os.path.exists(fname + '.np') and not os.path.exists(fname + '.npz'):
+            # Look for it in DATA_DIR
+            fname_ = os.path.join(DATA_DIR, fname)
+            if not os.path.exists(fname_ + '.np') and not os.path.exists(fname_ + '.npz'):
+                raise FileNotFoundError('Files {}.np and/or {}.npz not found.'.format(fname,fname))
+            fname = fname_
+    
+    # Load data file
+    with open(fname + '.npz', 'rb') as f:
+        data = sparse.load_npz(f)
     if dense:
         data = data.todense().getA().reshape([-1,224,224]) # Unpack sparse representation
         
-    label_file = fname if fname.endswith('.np') else fname + '.np'
-    with open(label_file, 'rb') as f:
-        labels = np.load(label_file)
+    # Load label file
+    with open(fname + '.np', 'rb') as f:
+        labels = np.load(f)
     if label_only: # Throw out metadata if requested
         labels = [y['label'] for y in labels]
     return (data,labels)
 
 
+# URLs of the zipped datasets   TODO: Fill these out, then add more
+URL_by_dataset = {
+    'consistent_train': None,
+    'consistent_test': None,
+    'inconsistent_train': None,
+    'inconsistent_test': None,
+    'malicious_train': None,
+    'malicious_test': None,
+    'self_train': None,
+    'self_test': None,
+    'same_label_train': None,
+    'same_label_test': None,
+    'different_label_train': None,
+    'different_label_test': None,
+    'anticonsistent_train': None,
+    'anticonsistent_test': None
+}
+
+# Download one or more premade datasets into the specified folder. Pass 'all' to download all
+#   currently available, or 'paper' to download the four used in the Adversarial Removal of
+#   Texture Bias paper
+def fetch(dataset='paper', folder=DATA_DIR, overwrite=False):
+    if dataset == 'all':
+        dataset = list(URL_by_dataset.keys())
+    elif dataset == 'paper':
+        dataset == ['consistent_train','consistent_test','inconsistent_test','malicious_test']
+    elif not isinstance(dataset, list):
+        dataset = [dataset]
+    
+    os.makedirs(folder, exist_ok=True)
+    
+    for d in dataset:
+        urlbase = URL_by_dataset[d]
+        filebase = os.path.join(folder, d)
+        if urlbase is None: # In case not all datasets make it online
+            continue
+        
+        if not os.path.exists(filebase + '.npz') or overwrite:
+            print('Downloading {}...'.format(urlbase + '.npz'))
+            request.urlretrieve(urlbase + '.npz', filebase + '.npz')
+        
+        if not os.path.exists(filebase + '.np') or overwrite:
+            print('Downloading {}...'.format(urlbase + '.np'))
+            request.urlretrieve(urlbase + '.np', filebase + '.np')
+
+
 if __name__ == '__main__':
-    make('correlated', fname='Mosaic_MNIST')
+    DATA_DIR = os.path.join(os.getcwd(), 'data')
+    make('consistent')
 

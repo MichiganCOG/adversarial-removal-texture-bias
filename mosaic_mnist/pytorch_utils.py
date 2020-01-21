@@ -2,13 +2,13 @@ import torch
 import numpy as np
 from torch.utils import data
 import torchvision.transforms as transforms
-import mnist_mosaic as mm
+import mosaic
 
 
 class MnistMosaicDataset(data.Dataset):
     
     def __init__(self, fname, transform=None, label_only=True):
-        self._x, self._y = mm.load(fname, label_only=label_only, dense=False)
+        self._x, self._y = mosaic.load(fname, label_only=label_only, dense=False)
         self.transform = transform
     
     def __len__(self):
