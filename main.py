@@ -16,6 +16,7 @@ import torchvision.datasets as datasets
 import models
 from adversarial_optim import AdversarialWrapper as optim_wrapper
 from utils import AverageMeter, ProgressMeter
+import mosaic_mnist
 
 
 # All acceptable model architecture names
@@ -47,34 +48,53 @@ def main(args):
 
 
     print('Making optimizers...')
-    task_optim = optim.SGD(model.task_parameters(), lr=args.lr, momentum=args.momentum)
-    adv_optim = optim.SGD(model.adversary_parameters(), lr=args.adv_lr, momentum=args.adv_momentum)
+    task_params = [p for n,p in model.named_parameters() if 'featurizer' in n or 'task_branch' in n]
+    task_optim = optim.SGD(task_params, lr=args.lr, momentum=args.momentum)
+    adv_params = [p for n,p in model.named_parameters() if 'adversary_branch' in n]
+    adv_optim = optim.SGD(adv_params, lr=args.adv_lr, momentum=args.adv_momentum)
 
     optimizer = optim_wrapper(task_optim, adv_optim, args.eta)
     criterion = nn.CrossEntropyLoss()
 
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
     print('Accessing training data...')
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize]))
+    if args.dataset == 'imagenet':
+        traindir = os.path.join(args.data, 'train')
+        train_dataset = datasets.ImageFolder(
+            traindir,
+            transforms.Compose([
+                transforms.RandomResizedCrop(224),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize]))
+    elif args.dataset == 'mosaic_mnist':
+        train_dataset = mosaic_mnist.MnistMosaicDataset(
+            'consistent_train',
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                mosaic_mnist.grayscale2color]),
+                label_only = True)
             
     print('Accessing validation data...')
-    val_dataset = datasets.ImageFolder(
-        valdir,
-        transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize]))
+    if args.dataset == 'imagenet':
+        valdir = os.path.join(args.data, 'val')
+        val_dataset = datasets.ImageFolder(
+            valdir,
+            transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                normalize]))
+    elif args.dataset == 'mosaic_mnist':
+        val_dataset = mosaic_mnist.MnistMosaicDataset(
+            'consistent_test',
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                mosaic_mnist.grayscale2color]),
+                label_only = True)
+                
             
     print('Making data loaders...')
     train_loader = torch.utils.data.DataLoader(
@@ -99,7 +119,14 @@ def main(args):
             train_one_epoch(train_loader, model, optimizer, criterion, epoch, args)
 
     if args.pretrain_epochs > 0 or args.adv_pretrain_epochs > 0:
-        
+        save_checkpoint({
+            'epoch': 0,
+            'arch': args.arch,
+            'state_dict': model.state_dict(),
+            'best_acc1': None,
+            'optimizer': optimizer.state_dict()},
+            False,
+            args.checkpoint_dir + 'checkpoint.pth.tar')
     
     print('Training:')
     optimizer.mode('train')
@@ -260,7 +287,7 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training - '
                     'With Texture Bias Adversary')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
-parser.add_argument('dataset', default='imagenet', choices=['imagenet','mosaic_mnist'],
+parser.add_argument('--dataset', default='imagenet', choices=['imagenet','mosaic_mnist'],
                     help='dataset to train/test on')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='vgg11_adv', choices=model_names,
                     help='model architecture: ' + ' | '.join(model_names) + \

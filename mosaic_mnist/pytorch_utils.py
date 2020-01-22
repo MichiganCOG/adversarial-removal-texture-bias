@@ -4,6 +4,15 @@ from torch.utils import data
 import torchvision.transforms as transforms
 import mosaic
 
+# Example instantiation of dataset:
+# train_set = mosaic_mnist.MnistMosaicDataset(
+#               'consistent_train',
+#               transform = transforms.Compose([
+#                   transforms.ToTensor(),
+#                   mosaic_mnist.grayscale2color]),
+#               label_only=True)
+
+
 
 class MnistMosaicDataset(data.Dataset):
     
@@ -18,19 +27,12 @@ class MnistMosaicDataset(data.Dataset):
         img = self._x[index,:].todense().getA().reshape([224,224,1])
         if self.transform:
             img = self.transform(img)
-        return img, self._y[index]
+        return img, int(self._y[index])
 
 
-# Takes in a [N, 1, H, W] Tensor and returns a [N, 3, H, w] Tensor by viewing the underlying
-#    data as the same channel 3 times. New tensor is not writeable.    
+# Takes in a [1, H, W] or [N, 1, H, W] Tensor and returns a [3, H, W] or [N, 3, H, W] Tensor by 
+#   viewing the underlying data as the same channel 3 times.   
 def grayscale2color(img):
-    shape = list(img.detach().numpy().shape)
-    shape[1] = 3
-    strides = list(img.detach().numpy().strides)
-    strides[1] = 0 # Honestly don't ever do this
-    return torch.tensor(np.lib.stride_tricks.as_strided(
-            img.data,
-            shape = tuple(shape),
-            strides = tuple(strides),
-            writeable = False),
-            requires_grad = False)
+    shape = list(img.shape)
+    shape[-3] = 3
+    return img.expand(*shape)
