@@ -259,6 +259,8 @@ def validate(val_loader, model, criterion, args):
 
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    if os.path.dirname(filename) != '':
+        os.mkdirs(os.path.dirname(filename), exist_ok=True)
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'model_best.pth.tar')
