@@ -126,7 +126,7 @@ def main(args):
             'best_acc1': None,
             'optimizer': optimizer.state_dict()},
             False,
-            args.checkpoint_dir + 'checkpoint.pth.tar')
+            args.checkpoint_path + 'checkpoint.pth.tar')
     
     print('Training:')
     optimizer.mode('train')
@@ -148,7 +148,7 @@ def main(args):
             'best_acc1': best_acc1,
             'optimizer': optimizer.state_dict()},
             is_best,
-            args.checkpoint_dir + 'checkpoint.pth.tar')
+            args.checkpoint_path + 'checkpoint.pth.tar')
 
 
 def train_one_epoch(train_loader, model, optimizer, criterion, epoch, args):
