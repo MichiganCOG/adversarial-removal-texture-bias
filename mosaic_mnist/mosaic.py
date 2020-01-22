@@ -139,7 +139,7 @@ def make_one_image(data, labels, idx, mode):
     
     # Initialize metadata entry
     metadata = {'label': labels[idx], 'components': []}
-    if mode == 'wrong_label':
+    if mode == 'malicious':
         metadata['wrong_label': wrong_label]
     
     # Add components one by one

@@ -98,7 +98,8 @@ def main(args):
             # Train one epoch
             train_one_epoch(train_loader, model, optimizer, criterion, epoch, args)
 
-    
+    if args.pretrain_epochs > 0 or args.adv_pretrain_epochs > 0:
+        
     
     print('Training:')
     optimizer.mode('train')
