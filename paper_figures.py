@@ -36,8 +36,10 @@ def figure1(show=True):
     plt.subplot(1,4,4)
     show_noaxes(img)
     
+    plt.savefig('mosaic-mnist-examples.png')
     if show:
         plt.show()
+    
 
 
 

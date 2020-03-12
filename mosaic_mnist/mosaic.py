@@ -171,7 +171,8 @@ def add_component_digit(img, field, component, label, idx, metadata):
         return img, field, metadata
     
     # Select a point in the image by reinterpreting the field as a probability distribution
-    coord = np.random.choice(224*224, None, False, [f / np.sum(field) for f in field.reshape([-1,])])
+    total = np.sum(field)
+    coord = np.random.choice(224*224, None, False, [f / total for f in field.reshape([-1,])])
     r = coord // field.shape[1]
     c = coord % field.shape[1]
     
@@ -194,10 +195,10 @@ def add_component_digit(img, field, component, label, idx, metadata):
 
 
 # Choose N indices of digits to make up the composite digit based on the mode. Output fake_label
-#    is None unless mode is 'wrong_label'.
-def select_indices(labels, idx, mode, N):
-
-    fake_label = None
+#    is None unless mode is 'wrong_label'. Input p is the probability of the lesser-selected digits
+#    (wrong labels for 'consistent', right labels for 'anticonsistent', and all labels other than
+#    the fake one for 'malicious')
+def select_indices(labels, idx, mode, N, fake_label=None, p=0.05):
     
     # Use the composite digit N times:
     if mode == 'self':
@@ -211,20 +212,22 @@ def select_indices(labels, idx, mode, N):
         probs = [0. if y == labels[idx] else 1. for y in labels]
     # Choose digits randomly, favoring same-labeled digits highly
     elif mode == 'consistent':
-        probs = [1. if y == labels[idx] else 0.05 for y in labels]
+        probs = [1. if y == labels[idx] else p for y in labels]
     # Choose digits randomly, favoring differently-labeled digits highly
     elif mode == 'anticonsistent':
-        probs = [0.05 if y == labels[idx] else 1. for y in labels]
+        probs = [p if y == labels[idx] else 1. for y in labels]
     # Pick a wrong label, then choose digits as if it were correct and the mode was 'correlated'
     elif mode == 'malicious':
-        fake_label = np.random.choice(list(range(labels[idx])) + list(range(labels[idx]+1,10)))
-        probs = [1. if y == fake_label else 0.05 for y in labels]
+        if fake_label is None:
+            fake_label = np.random.choice(list(range(labels[idx])) + list(range(labels[idx]+1,10)))
+        probs = [1. if y == fake_label else p for y in labels]
     # Ignore labels and choose randomly. What's life without a little whimsy?
     elif mode == 'inconsistent':
         probs = [1.]*len(labels)
     
     # Normalize probabilities and choose digits
-    probs = [p / sum(probs) for p in probs]
+    total = sum(probs)
+    probs = [p / total for p in probs]
     inds = np.random.choice(len(labels), (N,), False, probs)
     
     return inds, fake_label

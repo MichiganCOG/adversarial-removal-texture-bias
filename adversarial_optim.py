@@ -2,6 +2,7 @@ import torch
 import torch.optim as optim
 import copy
 import numpy as np
+import math
 from contextlib import contextmanager
 
 
@@ -69,6 +70,8 @@ class AdversarialWrapper(optim.Optimizer):
     
     # The Optimizer class method. Alternates between 1 task step and [eta] adversary steps
     def step(self, update_after=True, **kwargs):
+        if self._mode == 'train':
+            self.clip_grads()
         if self.step_type() == 'task':
             self.step_task(update_after, **kwargs)
         else:
@@ -81,13 +84,19 @@ class AdversarialWrapper(optim.Optimizer):
         if self._steps_since_task >= self._eta:
             return 'task'
         return 'adversary'
+    
+    # Clip all parameter gradients to avoid NaN explosion
+    def clip_grads(self):
+        for param in [p for g in self.param_groups for p in g['params']]:
+            #torch.nn.utils.clip_grad_norm_(param, math.sqrt(param.numel())/10)
+            torch.nn.utils.clip_grad_norm_(param, 1.0)
 
     # Change the optimization mode:
     #    'train': Alternate between task and adversary steps
     #    'task': Only take task steps (for pretraining)
     #    'adversary': Only take adversary steps (for pretraining)
     def mode(self, m):
-        assert(m in ['train', 'task', 'adversary'], 'Invalid AdversarialWrapper mode: {}'.format(m))
+        assert m in ['train', 'task', 'adversary'], 'Invalid AdversarialWrapper mode: {}'.format(m)
         self._mode = m
 
     # Look ahead in parameter space to compute gradients at a predicted point
