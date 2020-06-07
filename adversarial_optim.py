@@ -38,6 +38,8 @@ class AdversarialWrapper(optim.Optimizer):
         self._steps_since_task = self._eta-1
         # Training mode: 'train' | 'task' | 'adversary'
         self._mode = 'train'
+        # Clipping threshold for gradient norms
+        self.max_grad_norm = 1.0
             
     # Update our internal copies of the parameters. Must be called after every parameter 
     #   change if gradient prediction is being used; can be ignored otherwise
@@ -87,9 +89,9 @@ class AdversarialWrapper(optim.Optimizer):
     
     # Clip all parameter gradients to avoid NaN explosion
     def clip_grads(self):
-        for param in [p for g in self.param_groups for p in g['params']]:
-            #torch.nn.utils.clip_grad_norm_(param, math.sqrt(param.numel())/10)
-            torch.nn.utils.clip_grad_norm_(param, 1.0)
+        for param in [p for g in self.param_groups for p in g['params'] if p.grad is not None]:
+            param.grad[torch.isnan(param.grad)] = 0.0
+            torch.nn.utils.clip_grad_norm_(param, self.max_grad_norm)
 
     # Change the optimization mode:
     #    'train': Alternate between task and adversary steps

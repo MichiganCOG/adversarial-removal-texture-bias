@@ -123,6 +123,18 @@ def main(args, **kwargs):
             'optimizer': optimizer.state_dict()},
             is_best,
             os.path.join(args.log_path, 'checkpoint.pth.tar'))
+    
+    if args.evaluate:
+        acc1 = validate(val_loader, model, criterion, args)
+        if args.dataset != 'mosaic_mnist':
+            print('Validation Acc@1: {}%'.format(acc1*100.))
+        else:
+            acc1_d = {'consistent': acc1, 'inconsistent': 0., 'malicious': 0.}
+            for mod in ['inconsistent', 'malicious']:
+                val_loader = make_dataloader(args, training=False, mod=mod)
+                acc1_d[mod] = validate(val_loader, model, criterion, args)
+            print('Validation Acc@1:')
+            print('Consistent: {}%    Inconsistent: {}%    Malicious: {}%'.format(acc1_d['consistent'], acc1_d['inconsistent'], acc1_d['malicious']))
 
 
 # Instantiates and prepares a model to args specifications
@@ -153,7 +165,7 @@ def prepare_model(args):
     
 
 # Makes and returns the dataloader for a specific dataset
-def make_dataloader(args, training=True):
+def make_dataloader(args, training=True, mod='consistent'):
 
     # ImageNet
     if args.dataset == 'imagenet':
@@ -167,12 +179,14 @@ def make_dataloader(args, training=True):
                     normalize])
         dataset = datasets.ImageFolder(datadir, tform)
     # Mosaic MNIST
-    elif args.dataset == 'mosaic_mnist':
+    elif args.dataset.startswith('mosaic_mnist'):
+        bg = '+bg' if args.dataset.endswith('+bg') else ''
         tform = tf.Compose([
                     tf.ToTensor(),
                     mosaic_mnist.grayscale2color])
+        dset_name = mod + '_' + ('train' if training else 'test') + bg
         dataset = mosaic_mnist.MnistMosaicDataset(
-                    'consistent_train+bg' if training else 'consistent_test+bg',   #TODO: remove +bg
+                    dset_name,
                     tform,
                     label_only=True)
     else:
